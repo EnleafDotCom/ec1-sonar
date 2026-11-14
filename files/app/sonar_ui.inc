@@ -288,14 +288,31 @@ static void sn_draw_knob_page(void)
     static const char *const speeds[4] = {"1/4X", "1/2X", "1X", "2X"};
     switch (sn_page) {
     case SN_SPACE: {
-        sn_page_header("SPACE", "TAPE ECHO + 11 SECOND HALL", 0x7eff);
-        sn_body_clear(0xec000000U);
-        static const char *const l[5] = {"EVERY RING FEEDS THE SPACE:", "A THREE-HEAD TAPE ECHO WITH", "WOW AND FLUTTER, AND A LONG", "DARK HALL. ECHO/VERB/DRY FOR", "OUTBOARD GEAR."};
-        sn_lines(sig, l, 5);
-        knob(0, "K1 MODE", sonar_fx_name(), 0x7eff);
-        sn_knob_num(1, "K2 AMOUNT", sn_song.fx_amt, 0x7eff);
-        sn_knob_num(2, "K3 VOLUME", sn_song.vol, TEXT);
-        sn_knob_num(3, "K4 BPM", sn_song.bpm, TEXT);
+        /* the space mixer: how much of each track feeds the tape echo and the hall */
+        char fsub[32]; memset(fsub, 0, sizeof fsub); strcpy(fsub, "ECHO + HALL SENDS  MODE "); strcat(fsub, sonar_fx_name());
+        sn_page_header("SPACE", fsub, 0x7eff);
+        sn_body_clear(0xec000001U);
+        uint32_t ssig = 0;
+        for (unsigned l = 0; l < SN_LANES; ++l) ssig = ssig * 131U + sonar_space_send(l) * 2U + sn_song.r[l].p.sp_on;
+        ssig ^= (uint32_t)sn_song.fx_amt << 24;
+        if (cache->title_cache != ssig) {
+            cache->title_cache = ssig;
+            paint_fill(0, 34, 240, 160, BACK);
+            for (unsigned l = 0; l < SN_LANES; ++l) {
+                unsigned x = 10 + l * 46, hh = sonar_space_send(l) * 100U / 100U;
+                paint_fill(x, 40, 34, 100, 0x1082);
+                paint_fill(x, 40 + 100 - hh, 34, hh, sn_song.r[l].p.sp_on ? sn_col[l] : dim565(sn_col[l]));
+                text(x, 146, sonar_ring_name(l), 1, sn_col[l], BACK);
+                text(x, 158, sn_song.r[l].p.sp_on ? "" : "AUTO", 1, DIM, BACK);
+                static const char *const which[SN_LANES] = {"K1", "K2", "K3", "K4", "PRST"};
+                text(x, 170, which[l], 1, DIM, BACK);
+            }
+            text(10, 184, "SPACE AMOUNT: MAIN K3. MODE: HOME A#", 1, DIM, BACK);
+        }
+        sn_knob_num(0, "K1 HAZE", (int)sonar_space_send(0), sn_col[0]);
+        sn_knob_num(1, "K2 GLINT", (int)sonar_space_send(1), sn_col[1]);
+        sn_knob_num(2, "K3 DRONE", (int)sonar_space_send(2), sn_col[2]);
+        sn_knob_num(3, "K4 PULSE", (int)sonar_space_send(3), sn_col[3]);
         break; }
     case SN_SOUND: {
         if (r == SN_KEYS) {
@@ -361,7 +378,7 @@ static void sn_draw_knob_page(void)
             }
             sn_knob_num(0, "K1 TONE", R->p.tone, sn_col[r]);
             sn_knob_num(1, "VIBRATO", R->p.mod, sn_col[r]);
-            if (R->p.sp_on) sn_knob_num(2, "K3 SPACE", R->p.sp, sn_col[r]); else knob(2, "K3 SPACE", "AUTO", sn_col[r]);
+            sn_knob_num(2, "K3 SPACE", (int)sonar_space_send(r), sn_col[r]);
             knob(3, "K4 SCALE", sn_song.keys_lock ? "LOCK" : "FREE", sn_col[r]);
             break;
         }
@@ -372,7 +389,7 @@ static void sn_draw_knob_page(void)
         sn_knob_num(0, "K1 TONE", R->p.tone, sn_col[r]);
         sn_knob_num(1, "K2 ERA", R->p.era, sn_col[r]);
         sn_knob_num(2, "K3 TAPE", R->p.tape, sn_col[r]);
-        if (R->p.sp_on) sn_knob_num(3, "K4 SPACE", R->p.sp, sn_col[r]); else knob(3, "K4 SPACE", "AUTO", sn_col[r]);
+        sn_knob_num(3, "K4 SPACE", (int)sonar_space_send(r), sn_col[r]);
         break; }
     case SN_MIX: {
         sn_page_header("MIX", "WHITE KEYS 1-4 MUTE A TRACK", TEXT);
@@ -519,10 +536,7 @@ static void sn_knob_feedback(unsigned k)
         else sn_feedback_text(who, "LOOP STEPS", R->len, 0);
         break; }
     case SN_SPACE:
-        if (k == 1) sn_feedback_text("", "SPACE MODE", 0, sonar_fx_name());
-        else if (k == 2) sn_feedback_text("", "SPACE AMOUNT", sn_song.fx_amt, 0);
-        else if (k == 3) sn_feedback_text("", "OUTPUT VOLUME", sn_song.vol, 0);
-        else sn_feedback_text("", "TEMPO", sn_song.bpm, 0);
+        sn_feedback_text(sonar_ring_name(k - 1), "SPACE SEND", (int)sonar_space_send(k - 1), 0);
         break;
     case SN_SOUND:
         if (k == 1) sn_feedback_text(who, "SOUND", 0, sonar_sound_name(sn_sel));
@@ -554,14 +568,14 @@ static void sn_knob_feedback(unsigned k)
         if (sn_sel == SN_KEYS) {
             if (k == 1) sn_feedback_text("KEYS", "TONE", R->p.tone, 0);
             else if (k == 2) sn_feedback_text("KEYS", "VIBRATO", R->p.mod, 0);
-            else if (k == 3) sn_feedback_text("KEYS", "SPACE", R->p.sp, 0);
+            else if (k == 3) sn_feedback_text("KEYS", "SPACE SEND", (int)sonar_space_send(SN_KEYS), 0);
             else sn_feedback_text("KEYS", "SCALE", 0, sn_song.keys_lock ? "LOCKED TO THE MOOD" : "FREE");
             break;
         }
         if (k == 1) sn_feedback_text(who, "TONE", R->p.tone, 0);
         else if (k == 2) sn_feedback_text(who, "ERA", R->p.era, 0);
         else if (k == 3) sn_feedback_text(who, "TAPE", R->p.tape, 0);
-        else sn_feedback_text(who, "SPACE SEND", R->p.sp, 0);
+        else sn_feedback_text(who, "SPACE SEND", (int)sonar_space_send(sn_sel), 0);
         break;
     case SN_MIX:
         sn_feedback_text(sonar_ring_name(k - 1), "LEVEL", sn_song.r[k - 1].p.lvl, 0);
@@ -693,10 +707,11 @@ static void sonar_page_input(const struct fm1_controls *controls, uint32_t press
         if (d4) sonar_param(sn_sel, SP_LEN, d4);
         break;
     case SN_SPACE:
-        if (d1) sonar_fx_mode(d1);
-        if (f2) sonar_fx_amt(f2);
-        if (f3) sonar_volume(f3);
-        if (f4) sonar_tempo(f4);
+        if (f1) sonar_param(0, SP_SP, f1);
+        if (f2) sonar_param(1, SP_SP, f2);
+        if (f3) sonar_param(2, SP_SP, f3);
+        if (f4) sonar_param(3, SP_SP, f4);
+        if (dp) { sonar_param(SN_KEYS, SP_SP, dp * 2); sn_feedback_text("KEYS", "SPACE SEND", (int)sonar_space_send(SN_KEYS), 0); }
         break;
     case SN_SOUND:
         if (d1) sonar_sound(sn_sel, d1);

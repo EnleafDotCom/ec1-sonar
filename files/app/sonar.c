@@ -574,6 +574,13 @@ const char *sonar_midi_name(int m)
     return b;
 }
 const char *sonar_keys_chord_name(void) { return chord_names[sn_song.r[SN_KEYS].pad & 3]; }
+/* how much of a track goes to the space: its own setting, or the designed amount (AUTO) */
+unsigned sonar_space_send(unsigned r)
+{
+    static const uint8_t auto_pct[SN_LANES] = {100, 100, 75, 80, 90};
+    if (r >= SN_LANES) return 0;
+    return sn_song.r[r].p.sp_on ? sn_song.r[r].p.sp : auto_pct[r];
+}
 void sonar_mood(int delta) { sn_song.mood = (uint8_t)((sn_song.mood + SN_MOODS + (delta > 0 ? 1 : -1)) % SN_MOODS); ++sn_revision; }
 void sonar_tempo(int delta) { sn_song.bpm = (uint8_t)clampi(sn_song.bpm + delta, 0, 120); sonar_dsp_tempo(); ++sn_revision; }
 void sonar_mutate_amt(int delta) { sn_song.mut = (uint8_t)clampi(sn_song.mut + delta * 5, 0, 100); ++sn_revision; }
@@ -617,7 +624,7 @@ void sonar_param(unsigned r, unsigned which, int delta)
     case SP_TONE: p = &R->p.tone; break;
     case SP_ERA: p = &R->p.era; break;
     case SP_TAPE: p = &R->p.tape; break;
-    case SP_SP: p = &R->p.sp; R->p.sp_on = 1; break;
+    case SP_SP: if (!R->p.sp_on) R->p.sp = (uint8_t)sonar_space_send(r); p = &R->p.sp; R->p.sp_on = 1; break;   /* the first turn starts from where AUTO was */
     default: return;
     }
     if (p) *p = (uint8_t)clampi(*p + delta * 2, 0, 100);

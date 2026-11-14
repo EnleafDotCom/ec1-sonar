@@ -96,6 +96,7 @@ void sonar_clear_ring(unsigned r);
 void sonar_seed_ring(unsigned r);
 void sonar_mute(unsigned r);
 void sonar_remix(unsigned r);
+unsigned sonar_space_send(unsigned r);   /* 0..100: how much of a track feeds the echo and hall */
 void sonar_keys_chord(int delta);
 const char *sonar_keys_wave_name(void);
 void sonar_keys_edit(unsigned what, int delta);   /* 0 wave, 1 detune, 2 attack, 3 release */
