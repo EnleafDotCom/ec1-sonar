@@ -687,7 +687,7 @@ _Static_assert(sizeof(struct record) <= FM1_FLASH_SECTOR_BYTES, "a song fits one
 static struct record rec;
 static char slot_names[SN_SLOTS][24];
 static uint8_t slot_known[SN_SLOTS];
-static uint32_t generation, saved_crc, seen_crc, changed_at, last_check;
+static uint32_t generation, saved_crc, seen_crc, changed_at, last_check, flash_at;
 static uint32_t crc32(const void *data, unsigned n, uint32_t c)
 {
     const uint8_t *p = data; c = ~c;
@@ -716,7 +716,9 @@ int sonar_store_save(unsigned slot)
     for (unsigned r = 0; r < SN_RINGS; ++r) for (unsigned i = 0; i < SN_STEPS; ++i) rec.song.r[r].st[i].skip = 0;
     rec.crc = crc32(&rec.song, (unsigned)(sizeof rec - offsetof(struct record, song)), 0);
     uint32_t at = slot * FM1_FLASH_SECTOR_BYTES;
-    if (fm1_flash_erase(at) || fm1_flash_write(at, &rec, sizeof rec)) return -1;
+    int bad = fm1_flash_erase(at) || fm1_flash_write(at, &rec, sizeof rec);
+    flash_at = fm1_millis() | 1U;
+    if (bad) return -1;
     slot_known[sn_slot] = 0; sn_slot = (uint8_t)slot; slot_known[slot] = 0;
     saved_crc = seen_crc = state_crc();
     return 0;
@@ -764,7 +766,8 @@ static void store_poll(uint32_t now)
     last_check = now;
     uint32_t c = state_crc();
     if (c != seen_crc) { seen_crc = c; changed_at = now; return; }
-    if (c != saved_crc && now - changed_at >= 6000U) (void)sonar_store_save(sn_slot);
+    /* never while the loops play: a Flash write can hold up the audio for an instant. SAVE still saves at once */
+    if (c != saved_crc && now - changed_at >= 6000U && !sn_rt.playing) (void)sonar_store_save(sn_slot);
 }
 
 /* ------------------------------------------------------------ start and the control loop */
@@ -797,23 +800,29 @@ void sonar_poll(uint32_t now)
     if (fading_out && !sn_rt.playing) { fading_out = 0; sonar_dsp_loops_fade(32767, 0); }
     store_poll(now);
     /* The work budget follows this FM-1: the platform counts audio blocks that
-     * came out late. One late block cuts the budget at once; after four clean
-     * seconds it creeps back up, so it settles just under what the chip can do. */
+     * came out late. A late block cuts the budget at once and sets a ceiling just
+     * under it; the budget climbs back only to that ceiling, and the ceiling
+     * itself rises slowly, so it settles below the edge instead of testing it.
+     * Late blocks right after a Flash write are the write's, not the voices'. */
     {
-        static uint32_t seen, checked, calm_since, started;
-        static int32_t budget = 80;
-        if (!started) { started = now ? now : 1; calm_since = now; }
+        static uint32_t seen, checked, calm_since, started, ceiling_at;
+        static int32_t budget = 80, ceiling = 110;
+        if (!started) { started = now ? now : 1; calm_since = ceiling_at = now; }
         if (now - checked >= 100U && now - started >= 2000U) {
             checked = now;
             struct fm1_audio_stats st; fm1_audio_stats_read(&st);
-            if (!seen) seen = st.overruns | 0x80000000U;
-            else if ((st.overruns | 0x80000000U) != seen) {
-                seen = st.overruns | 0x80000000U;
-                budget = budget > 32 ? budget - 10 : 24; calm_since = now;
-                sonar_dsp_budget(budget);
-            } else if (now - calm_since >= 4000U && budget < 110) {
-                budget += 4; calm_since = now;
-                sonar_dsp_budget(budget);
+            uint32_t ov = st.overruns | 0x80000000U;
+            if (!seen) seen = ov;
+            else if (ov != seen) {
+                seen = ov;
+                if (!(flash_at && now - flash_at < 1500U)) {
+                    budget = budget > 34 ? budget - 10 : 24;
+                    ceiling = budget; calm_since = ceiling_at = now;
+                    sonar_dsp_budget(budget);
+                }
+            } else {
+                if (now - ceiling_at >= 120000U && ceiling < 110) { ceiling += 2; ceiling_at = now; }
+                if (now - calm_since >= 4000U && budget < ceiling) { budget += 4; if (budget > ceiling) budget = ceiling; calm_since = now; sonar_dsp_budget(budget); }
             }
         }
     }

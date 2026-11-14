@@ -11,6 +11,11 @@
 #include "sonar.h"
 
 #define AC FM1_AUDIO_CODE
+/* Small helpers of the audio path go straight into their callers: an audio-code
+ * function is never inlined, and a call per sample costs the FM-1 dearly. */
+#define HOT static inline __attribute__((always_inline))
+/* The control task's table building is kept small; the audio path stays fast. */
+#define SETUP __attribute__((minsize))
 
 enum { FS = 44100, BLK = 128, VOICES = 16, NOSC = 6, EVQ = 16, LIVEQ = 16 };
 enum { ECHO_LEN = 16384, ECHO_DEC = 8 };
@@ -79,7 +84,7 @@ static volatile int32_t loops_fade = 32767, loops_fade_tgt = 32767, loops_fade_s
 /* ------------------------------------------------------------ voices */
 struct osc { uint32_t ph, inc; int32_t ratio, lvl, dk; uint8_t w, route; };
 struct voice {
-    uint8_t on, ring, stage, key, fm, fmode, nmode, n, stages, burst, kind, has_ring;
+    uint8_t on, ring, stage, key, fm, fmode, nmode, n, stages, burst, kind, has_ring, dying;
     struct osc o[NOSC];
     int32_t note;                      /* note x 256 */
     int32_t pe, pe_step, pe_k, pe_n;
@@ -122,24 +127,24 @@ static int32_t master_vol = 32767, comp_env, comp_gain = 32767, dc_xl, dc_yl, dc
 static unsigned fx_phase;
 
 /* ------------------------------------------------------------ small helpers */
-static AC uint32_t xr(void) { uint32_t x = rng; x ^= x << 13; x ^= x >> 17; x ^= x << 5; rng = x; return x; }
-static AC uint32_t rr(uint32_t n) { return ((xr() >> 16) * n) >> 16; }      /* 0 .. n-1 */
-static AC int32_t lerp(int32_t a, int32_t b, int32_t y) { return a + (((b - a) * y) >> 8); }      /* y 0..256 */
-static AC int32_t clamp32(int32_t x, int32_t lo, int32_t hi) { return x < lo ? lo : x > hi ? hi : x; }
-static AC uint32_t inc_of(int32_t note_q8)
+HOT uint32_t xr(void) { uint32_t x = rng; x ^= x << 13; x ^= x >> 17; x ^= x << 5; rng = x; return x; }
+HOT uint32_t rr(uint32_t n) { return ((xr() >> 16) * n) >> 16; }      /* 0 .. n-1 */
+HOT int32_t lerp(int32_t a, int32_t b, int32_t y) { return a + (((b - a) * y) >> 8); }      /* y 0..256 */
+HOT int32_t clamp32(int32_t x, int32_t lo, int32_t hi) { return x < lo ? lo : x > hi ? hi : x; }
+HOT uint32_t inc_of(int32_t note_q8)
 {
     note_q8 = clamp32(note_q8, 0, 128 * 256 + 255);
     int32_t n = note_q8 >> 8, f = note_q8 & 255;
     uint32_t a = note_inc[n], b = note_inc[n + 1];
     return a + ((b - a) >> 8) * (uint32_t)f;
 }
-static AC int32_t coef_of(int32_t idx_q8)
+HOT int32_t coef_of(int32_t idx_q8)
 {
     idx_q8 = clamp32(idx_q8, 0, 128 * 256 + 255);
     int32_t n = idx_q8 >> 8, f = idx_q8 & 255;
     return cut_coef[n] + (((cut_coef[n + 1] - cut_coef[n]) * f) >> 8);
 }
-static AC int32_t sat(const int16_t *t, int32_t x)          /* table shaper, x Q13 over -4..4 */
+HOT int32_t sat(const int16_t *t, int32_t x)          /* table shaper, x Q13 over -4..4 */
 {
     int32_t p = x + 32768;
     if (p <= 0) return t[0];
@@ -147,9 +152,9 @@ static AC int32_t sat(const int16_t *t, int32_t x)          /* table shaper, x Q
     int32_t i = p >> 7, f = p & 127;
     return t[i] + (((t[i + 1] - t[i]) * f) >> 7);
 }
-static AC int32_t lfo(uint16_t ph) { return sine_t[ph >> 6]; } /* Q13 */
-static AC int32_t kmul(int32_t x, int32_t k) { return (int32_t)(((int64_t)x * k) >> 16); }
-static AC int32_t over(int32_t x, int32_t n) { return (int32_t)(((int64_t)x * recip16[clamp32(n, 1, 1023)]) >> 16); }   /* x / n */
+HOT int32_t lfo(uint16_t ph) { return sine_t[ph >> 6]; } /* Q13 */
+HOT int32_t kmul(int32_t x, int32_t k) { return (int32_t)(((int64_t)x * k) >> 16); }
+HOT int32_t over(int32_t x, int32_t n) { return (int32_t)(((int64_t)x * recip16[clamp32(n, 1, 1023)]) >> 16); }   /* x / n */
 static AC int midi_of(int base, int d, unsigned mood)
 {
     int L = scale_t[mood][0], o = 0;
@@ -171,7 +176,7 @@ static AC struct voice *grab(void)
     return best;
 }
 /* the work a voice takes per block: its oscillators, filters and noise */
-static AC int32_t voice_cost(const struct voice *x)
+HOT int32_t voice_cost(const struct voice *x)
 {
     return (int32_t)x->n + (x->fmode ? 2 * (int32_t)x->stages : 0) + (x->nmode ? 2 : 0) + (x->has_ring ? 1 : 0) + 1;
 }
@@ -612,7 +617,7 @@ static AC void ring_block(unsigned r, int32_t *outL, int32_t *outR, int32_t *fx)
 }
 
 /* ------------------------------------------------------------ the space: echo and hall */
-static AC int32_t echo_read(int32_t d_q8)
+HOT int32_t echo_read(int32_t d_q8)
 {
     int32_t di = d_q8 >> 8, f = d_q8 & 255;
     uint32_t m = ECHO_LEN - 1;
@@ -639,7 +644,7 @@ static AC void echo_step(int32_t in)
     e_outL = e_lp + ((t2 * 15000) >> 15) + ((t3 * 3000) >> 15);
     e_outR = e_lp + ((t2 * 4500) >> 15) + ((t3 * 11000) >> 15);
 }
-static AC int32_t ap(int16_t *buf, uint32_t len, uint32_t *p, int32_t x)
+HOT int32_t ap(int16_t *buf, uint32_t len, uint32_t *p, int32_t x)
 {
     int32_t d = buf[*p];
     int32_t y = d - ((x * 20000) >> 15);
@@ -737,19 +742,19 @@ AC void sonar_render(int32_t *output, unsigned frames)
      * one block: fading tails first, then the softest notes. */
     {
         int32_t cost = 0;
-        for (unsigned i = 0; i < VOICES; ++i) if (v[i].on && v[i].rel_left != 1) cost += voice_cost(&v[i]);
+        for (unsigned i = 0; i < VOICES; ++i) if (v[i].on && !v[i].dying) cost += voice_cost(&v[i]);
         int32_t budget = work_budget;
         while (cost > budget) {
             struct voice *q = 0; int32_t best = 0x7fffffff;
             for (unsigned i = 0; i < VOICES; ++i) {
                 struct voice *x = &v[i];
-                if (!x->on || x->rel_left == 1 || x->burst) continue;
+                if (!x->on || x->dying || x->burst) continue;
                 int32_t s = x->amp >> (x->stage == 2 ? 2 : 0);      /* a fading tail counts as quieter */
                 if (s < best) { best = s; q = x; }
             }
             if (!q) break;
             cost -= voice_cost(q);
-            q->stage = 2; q->kr = 0; q->rel_left = 2; q->gate = 0;   /* ramps to silence across the next block, then stops */
+            q->stage = 2; q->kr = 31500; q->rel_left = 10; q->gate = 0; q->dying = 1;   /* fades out over about 15 ms: no pop */
         }
     }
     unsigned busy[SN_LANES];
@@ -837,18 +842,18 @@ AC void sonar_render(int32_t *output, unsigned frames)
 }
 
 /* ------------------------------------------------------------ control task */
-static void live_push(unsigned kind, unsigned ring, unsigned d, unsigned y, unsigned key)
+SETUP static void live_push(unsigned kind, unsigned ring, unsigned d, unsigned y, unsigned key)
 {
     if (lq_w - lq_r >= LIVEQ) return;
     unsigned i = lq_w & (LIVEQ - 1);
     lq_kind[i] = (uint8_t)kind; lq_ring[i] = (uint8_t)ring; lq_d[i] = (uint8_t)d; lq_y[i] = (uint8_t)y; lq_key[i] = (uint8_t)key;
     lq_w = lq_w + 1;
 }
-void sonar_dsp_live(unsigned ring, unsigned d, unsigned y, unsigned key, unsigned down) { live_push(down ? 1 : 2, ring, d, y, key + 1); }
-void sonar_dsp_audition(unsigned ring, unsigned d, unsigned y) { live_push(0, ring, d, y, 0); }
+SETUP void sonar_dsp_live(unsigned ring, unsigned d, unsigned y, unsigned key, unsigned down) { live_push(down ? 1 : 2, ring, d, y, key + 1); }
+SETUP void sonar_dsp_audition(unsigned ring, unsigned d, unsigned y) { live_push(0, ring, d, y, 0); }
 
 /* float helpers for building tables (control task only) */
-static float fexp2(float x)
+SETUP static float fexp2(float x)
 {
     int i = (int)x; if ((float)i > x) --i;
     float f = x - (float)i, y = 1.f + f * (.6931472f + f * (.2402265f + f * (.0555041f + f * .0096181f)));
@@ -856,7 +861,7 @@ static float fexp2(float x)
     while (i < 0) { y *= .5f; ++i; }
     return y;
 }
-static float flog2(float x)
+SETUP static float flog2(float x)
 {
     if (x <= 0) return -100.f;
     int e = 0;
@@ -865,8 +870,8 @@ static float flog2(float x)
     float t = (x - 1.f) / (x + 1.f), t2 = t * t;
     return (float)e + 2.885390f * t * (1.f + t2 * (.333333f + t2 * (.2f + t2 * .142857f)));
 }
-static float fexp(float x) { return fexp2(x * 1.4426950f); }
-static float fsin(float x)
+SETUP static float fexp(float x) { return fexp2(x * 1.4426950f); }
+SETUP static float fsin(float x)
 {
     const float pi = 3.14159265f;
     while (x > pi) x -= 2.f * pi;
@@ -874,46 +879,46 @@ static float fsin(float x)
     float x2 = x * x;
     return x * (1.f - x2 / 6.f * (1.f - x2 / 20.f * (1.f - x2 / 42.f * (1.f - x2 / 72.f * (1.f - x2 / 110.f)))));
 }
-static float ftanh(float x) { if (x > 9.f) return 1.f; if (x < -9.f) return -1.f; float e = fexp(2.f * x); return (e - 1.f) / (e + 1.f); }
+SETUP static float ftanh(float x) { if (x > 9.f) return 1.f; if (x < -9.f) return -1.f; float e = fexp(2.f * x); return (e - 1.f) / (e + 1.f); }
 static const float KR = 44100.f / 128.f;
-static int32_t kq(float tau) { if (tau < .0005f) return 0; return (int32_t)(fexp(-1.f / (tau * KR)) * 65536.f); }
-static int32_t cidx(float hz) { if (hz < 30.f) hz = 30.f; return (int32_t)(flog2(hz / 30.f) / .0703893f * 256.f); }   /* log2(1.05) */
-static int32_t cents_q16(float c) { return (int32_t)(fexp2(c / 1200.f) * 65536.f); }
-static int32_t blocks(float s) { int32_t b = (int32_t)(s * KR + .5f); return b < 1 ? 1 : b; }
-static int32_t damp(float q) { return (int32_t)(16384.f / q); }
-static float qdb(float db) { return fexp2(db / 6.0206f); }     /* the web lowpass Q is in dB */
-static int32_t lv(float x) { return (int32_t)(x * 32767.f); }
+SETUP static int32_t kq(float tau) { if (tau < .0005f) return 0; return (int32_t)(fexp(-1.f / (tau * KR)) * 65536.f); }
+SETUP static int32_t cidx(float hz) { if (hz < 30.f) hz = 30.f; return (int32_t)(flog2(hz / 30.f) / .0703893f * 256.f); }   /* log2(1.05) */
+SETUP static int32_t cents_q16(float c) { return (int32_t)(fexp2(c / 1200.f) * 65536.f); }
+SETUP static int32_t blocks(float s) { int32_t b = (int32_t)(s * KR + .5f); return b < 1 ? 1 : b; }
+SETUP static int32_t damp(float q) { return (int32_t)(16384.f / q); }
+SETUP static float qdb(float db) { return fexp2(db / 6.0206f); }     /* the web lowpass Q is in dB */
+SETUP static int32_t lv(float x) { return (int32_t)(x * 32767.f); }
 
 static struct tpl *T;
-static void tpl_begin(unsigned s)
+SETUP static void tpl_begin(unsigned s)
 {
     T = &tpls[s]; uint8_t *p = (uint8_t *)T; for (unsigned i = 0; i < sizeof *T; ++i) p[i] = 0;
     T->q10 = T->q11 = T->q20 = T->q21 = damp(qdb(1)); T->stages = 1;      /* the web lowpass default, Q 1 dB */
 }
-static void o_add(unsigned w, float ratio, float lv0, float lv1, unsigned route)
+SETUP static void o_add(unsigned w, float ratio, float lv0, float lv1, unsigned route)
 {
     struct tpl_osc *o = &T->o[T->n++];
     o->w = (uint8_t)w; o->route = (uint8_t)route; o->ratio = (int32_t)(ratio * 65536.f);
     o->lv0 = (int16_t)lv(lv0); o->lv1 = (int16_t)lv(lv1);
 }
-static float ct(float cents) { return fexp2(cents / 1200.f); }
+SETUP static float ct(float cents) { return fexp2(cents / 1200.f); }
 /* attack (at y = 0 and 1), decay (time constant D/3 to the sustain), sustain, release (R/4), peak */
-static void amp(float A0, float A1, float D, float S, float R, float pk0, float pk1)
+SETUP static void amp(float A0, float A1, float D, float S, float R, float pk0, float pk1)
 {
     T->A0 = blocks(A0); T->A1 = blocks(A1); T->ra0 = 65536 / T->A0; T->ra1 = 65536 / T->A1; T->rawA0 = A0; T->rawA1 = A1; T->rawR = R;
     T->kd = kq(D / 3.f > .005f ? D / 3.f : .005f); T->sus = lv(S); T->kr = kq(R / 4.f); T->rel_blocks = blocks(R * 1.6f + .05f);
     T->pk0 = lv(pk0); T->pk1 = lv(pk1);
 }
 /* a lowpass from a start cutoff to an end cutoff (each at y = 0 and 1), gliding with a time constant */
-static void lp(float s0, float s1, float e0, float e1, float tau0, float tau1)
+SETUP static void lp(float s0, float s1, float e0, float e1, float tau0, float tau1)
 {
     T->fmode = 1; T->c0s = cidx(s0); T->c1s = cidx(s1); T->c0e = cidx(e0); T->c1e = cidx(e1); T->ck0 = kq(tau0); T->ck1 = kq(tau1);
 }
-static void q1(float db0, float db1) { T->q10 = damp(qdb(db0)); T->q11 = damp(qdb(db1)); }
-static int32_t hzrate(float hz) { return (int32_t)(hz / KR * 65536.f); }
-static int32_t cq8(float cents) { return (int32_t)(cents / 100.f * 256.f); }
+SETUP static void q1(float db0, float db1) { T->q10 = damp(qdb(db0)); T->q11 = damp(qdb(db1)); }
+SETUP static int32_t hzrate(float hz) { return (int32_t)(hz / KR * 65536.f); }
+SETUP static int32_t cq8(float cents) { return (int32_t)(cents / 100.f * 256.f); }
 
-static void build_sounds(void)
+SETUP static void build_sounds(void)
 {
     /* the pads voice their chords wide: root, fifth, the third an octave up */
     chord_wide[S_ANGEL] = chord_wide[S_HALO] = chord_wide[S_BLOOM] = chord_wide[S_VOX] = 1;
@@ -1069,7 +1074,7 @@ static void build_sounds(void)
 }
 
 
-void sonar_dsp_init(void)
+SETUP void sonar_dsp_init(void)
 {
     recip16[0] = 65535; recip16[1] = 65535; for (int n = 2; n < 1024; ++n) recip16[n] = (uint16_t)(65536 / n);
     for (int n = 0; n < 130; ++n) note_inc[n] = (uint32_t)(440.f * fexp2(((float)n - 69.f) / 12.f) * 97391.548f);
@@ -1142,7 +1147,7 @@ void sonar_dsp_init(void)
     build_sounds();
     for (unsigned r = 0; r < SN_LANES; ++r) { rd[r].tp_pre = 256; rd[r].tp_post = 32767; rd[r].tp_a = 32767; rd[r].quiet = 400; }
 }
-void sonar_dsp_tempo(void)
+SETUP void sonar_dsp_tempo(void)
 {
     unsigned bpm = sn_song.bpm;
     tick_q8 = bpm ? (int32_t)(44100.f * 60.f / ((float)bpm * 8.f) * 256.f) : 0;
@@ -1155,8 +1160,8 @@ void sonar_dsp_tempo(void)
 }
 static const float ring_vol[SN_LANES] = {.36f, .44f, .6f, .85f, .5f}, ring_gate[SN_LANES] = {3, 1.2f, 3.5f, 1, 1.5f}, auto_sp[SN_LANES] = {1, 1, .75f, .8f, .9f};
 static uint32_t fade_blocks[SN_LANES];
-void sonar_dsp_fade(unsigned r, unsigned b) { if (r < SN_LANES) fade_blocks[r] = b; }
-void sonar_dsp_ring(unsigned r)
+SETUP void sonar_dsp_fade(unsigned r, unsigned b) { if (r < SN_LANES) fade_blocks[r] = b; }
+SETUP void sonar_dsp_ring(unsigned r)
 {
     if (r >= SN_LANES) return;
     const struct sn_ring *R = &sn_song.r[r];
@@ -1204,7 +1209,7 @@ void sonar_dsp_ring(unsigned r)
     d->dur = blocks(dur);
     d->quiet = d->quiet > 0 ? d->quiet : 0;
 }
-void sonar_dsp_fx(void)
+SETUP void sonar_dsp_fx(void)
 {
     unsigned m = sn_song.fx_mode & 3;
     float amt = sn_song.fx_amt / 100.f;
@@ -1216,7 +1221,7 @@ void sonar_dsp_fx(void)
     master_vol = (int32_t)(vol * vol * 32767.f);
 }
 
-void sonar_dsp_loops_fade(int32_t target, unsigned blocks)
+SETUP void sonar_dsp_loops_fade(int32_t target, unsigned blocks)
 {
     if (target < 0) target = 0;
     if (target > 32767) target = 32767;
@@ -1225,11 +1230,11 @@ void sonar_dsp_loops_fade(int32_t target, unsigned blocks)
     if (!step) step = target > loops_fade ? 1 : -1;
     loops_fade_step = step; loops_fade_tgt = target;
 }
-int32_t sonar_dsp_loops_level(void) { return loops_fade; }
+SETUP int32_t sonar_dsp_loops_level(void) { return loops_fade; }
 
 /* ------------------------------------------------------------ the keys' edits (control task) */
 static const uint8_t wave_ids[SN_WAVES] = {0, W_SINE, W_TRI, W_SAW, W_SQR, W_P25, W_VOX};
-void sonar_dsp_keys(void)
+SETUP void sonar_dsp_keys(void)
 {
     const struct tpl *t = &tpls[SN_SOUNDS + sn_song.r[SN_KEYS].ch % SN_KEY_SOUNDS];
     keys_w = wave_ids[sn_song.keys_wave % SN_WAVES];
@@ -1244,7 +1249,7 @@ void sonar_dsp_keys(void)
     keys_ra0 = 65536 / b0; keys_ra1 = 65536 / b1; keys_A0 = b0; keys_A1 = b1;
     keys_kr = kq(R / 4.f); keys_rel = blocks(R * 1.6f + .05f);
 }
-static float shape_of(unsigned w, float ph)
+SETUP static float shape_of(unsigned w, float ph)
 {
     ph -= (float)(int)ph;
     if (w == W_SINE) return fsin(ph * 6.2831853f);
@@ -1256,7 +1261,7 @@ static float shape_of(unsigned w, float ph)
     if (w >= W_VOX && w <= W_PLUCK) return (float)wt[w - W_VOX][(int)(ph * 512.f) & 511] / 8192.f;
     return 0;
 }
-void sonar_dsp_keys_shape(int8_t *out, unsigned n)
+SETUP void sonar_dsp_keys_shape(int8_t *out, unsigned n)
 {
     const struct tpl *t = &tpls[SN_SOUNDS + sn_song.r[SN_KEYS].ch % SN_KEY_SOUNDS];
     static float acc[256];
@@ -1281,11 +1286,11 @@ void sonar_dsp_keys_shape(int8_t *out, unsigned n)
     }
     for (unsigned i = 0; i < n; ++i) out[i] = (int8_t)(acc[i] / peak * 120.f);
 }
-void sonar_dsp_keys_env(float *attack, float *sustain, float *release)
+SETUP void sonar_dsp_keys_env(float *attack, float *sustain, float *release)
 {
     const struct tpl *t = &tpls[SN_SOUNDS + sn_song.r[SN_KEYS].ch % SN_KEY_SOUNDS];
     float am = fexp2(((float)sn_song.keys_atk - 50.f) / 25.f), rm = fexp2(((float)sn_song.keys_rel - 50.f) / 25.f);
     *attack = (t->rawA0 + t->rawA1) * .5f * am; *sustain = (float)t->sus / 32767.f; *release = t->rawR * rm;
 }
 
-void sonar_dsp_budget(int32_t units) { work_budget = units < 16 ? 16 : units; }
+SETUP void sonar_dsp_budget(int32_t units) { work_budget = units < 16 ? 16 : units; }
