@@ -872,8 +872,8 @@ AC void sonar_render(int32_t *output, unsigned frames)
     int32_t mv = master_vol, mv_wet = 24000;
     loops_send = fade;   /* the space: a fixed gain, never the compressor's */
     for (unsigned i = 0; i < BLK; ++i) {
-        int32_t l = (int32_t)(((int64_t)mixL[i] * gg) >> 15) + ((keysL[i] * 52000) >> 15) + ((wetL[i] * mv_wet) >> 15);
-        int32_t r = (int32_t)(((int64_t)mixR[i] * gg) >> 15) + ((keysR[i] * 52000) >> 15) + ((wetR[i] * mv_wet) >> 15);
+        int32_t l = (int32_t)(((int64_t)mixL[i] * gg) >> 15) + (int32_t)(((int64_t)keysL[i] * 61400) >> 15) + ((wetL[i] * mv_wet) >> 15);
+        int32_t r = (int32_t)(((int64_t)mixR[i] * gg) >> 15) + (int32_t)(((int64_t)keysR[i] * 61400) >> 15) + ((wetR[i] * mv_wet) >> 15);
         gg += gstep;
         int32_t hl = l - dc_xl + ((dc_yl * 32700 + 16384) >> 15), hr = r - dc_xr + ((dc_yr * 32700 + 16384) >> 15);   /* 10 Hz DC blocker */
         dc_xl = l; dc_yl = hl; dc_xr = r; dc_yr = hr;
