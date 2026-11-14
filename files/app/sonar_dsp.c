@@ -165,6 +165,15 @@ static AC int midi_of(int base, int d, unsigned mood)
 }
 
 /* ------------------------------------------------------------ starting notes */
+/* How much a voice matters when one must make room: a note still swelling in
+ * counts at the level it is heading for, a fading tail at a quarter, and a key
+ * you are holding is never chosen before the loops' notes. */
+HOT int32_t voice_keep(const struct voice *x)
+{
+    int32_t s = x->stage < 2 ? (x->pk > x->amp ? x->pk : x->amp) : x->amp >> 2;
+    if (x->ring == SN_KEYS && x->gate < 0 && x->stage < 2) s += 1 << 22;
+    return s;
+}
 #ifdef FM1_HOST_TEST
 static uint32_t dbg_steals, dbg_steal_amp, dbg_steal_dying, dbg_kills;
 __attribute__((export_name("sonar_dbg2"))) uint32_t sonar_dbg2(int w) { uint32_t r = w == 0 ? dbg_steals : w == 1 ? dbg_steal_amp : w == 2 ? dbg_kills : dbg_steal_dying; if (w == 3) { dbg_steals = dbg_steal_amp = dbg_kills = dbg_steal_dying = 0; } return r; }
@@ -176,7 +185,7 @@ static AC struct voice *grab(void)
     for (unsigned i = 0; i < VOICES; ++i) {
         if (!v[i].on) return &v[i];
         /* already fading out is best (nearly silent by now), then a tail, then the softest note */
-        int32_t s = v[i].amp + (v[i].dying ? 0 : v[i].stage < 2 ? 1 << 21 : 1 << 20);
+        int32_t s = v[i].dying ? v[i].amp : voice_keep(&v[i]) + (v[i].stage < 2 ? 1 << 21 : 1 << 20);
         if (s < best_score) { best_score = s; best = &v[i]; }
     }
 #ifdef FM1_HOST_TEST
@@ -757,7 +766,7 @@ AC void sonar_render(int32_t *output, unsigned frames)
             for (unsigned i = 0; i < VOICES; ++i) {
                 struct voice *x = &v[i];
                 if (!x->on || x->dying || x->burst) continue;
-                int32_t s = x->amp >> (x->stage == 2 ? 2 : 0);
+                int32_t s = voice_keep(x);
                 if (s < best) { best = s; q = x; }
             }
             if (!q) break;
@@ -777,7 +786,7 @@ AC void sonar_render(int32_t *output, unsigned frames)
             for (unsigned i = 0; i < VOICES; ++i) {
                 struct voice *x = &v[i];
                 if (!x->on || x->dying || x->burst) continue;
-                int32_t s = x->amp >> (x->stage == 2 ? 2 : 0);      /* a fading tail counts as quieter */
+                int32_t s = voice_keep(x);                            /* tails first, never a held key before the loops */
                 if (s < best) { best = s; q = x; }
             }
             if (!q) break;
@@ -861,7 +870,7 @@ AC void sonar_render(int32_t *output, unsigned frames)
     gg = (int32_t)(((int64_t)gg * fade) >> 15); gstep = (int32_t)(((int64_t)gstep * fade) >> 15);
     int32_t mv = master_vol;
     for (unsigned i = 0; i < BLK; ++i) {
-        int32_t l = (int32_t)(((int64_t)mixL[i] * gg) >> 15) + ((keysL[i] * 42000) >> 15), r = (int32_t)(((int64_t)mixR[i] * gg) >> 15) + ((keysR[i] * 42000) >> 15);
+        int32_t l = (int32_t)(((int64_t)mixL[i] * gg) >> 15) + ((keysL[i] * 52000) >> 15), r = (int32_t)(((int64_t)mixR[i] * gg) >> 15) + ((keysR[i] * 52000) >> 15);
         gg += gstep;
         int32_t hl = l - dc_xl + ((dc_yl * 32700 + 16384) >> 15), hr = r - dc_xr + ((dc_yr * 32700 + 16384) >> 15);   /* 10 Hz DC blocker */
         dc_xl = l; dc_yl = hl; dc_xr = r; dc_yr = hr;
