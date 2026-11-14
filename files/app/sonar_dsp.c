@@ -79,6 +79,7 @@ struct ringdsp {
 static struct ringdsp rd[SN_LANES];
 static int32_t ring_bus[SN_LANES][BLK];
 static int32_t ring_tape_pe[SN_LANES];
+static int32_t loops_send = 32767;   /* loops fade x volume, for their echo sends */
 static volatile int32_t loops_gain = 32767;   /* LOOPS volume: 80 is as designed (Q15) */
 static volatile int32_t loops_fade = 32767, loops_fade_tgt = 32767, loops_fade_step;   /* PLAY held: the loops fade in or out */
 
@@ -593,7 +594,7 @@ static AC void ring_block(unsigned r, int32_t *outL, int32_t *outR, int32_t *fx)
         R->gain += R->gain_step;
         if (!R->gain_step || (R->gain_step > 0 && R->gain > R->gain_tgt) || (R->gain_step < 0 && R->gain < R->gain_tgt)) R->gain = R->gain_tgt;
     }
-    int32_t g = R->gain, send = R->send;
+    int32_t g = R->gain, send = r == SN_KEYS ? R->send : (int32_t)(((int64_t)R->send * loops_send) >> 15);   /* the loops' echo follows LOOPS volume */
     /* tape dropouts: the level sags as worn oxide passes the head */
     if (R->drop_p && R->drop_t <= 0 && (int32_t)(xr() & 0xfffff) < R->drop_p) { R->drop_t = 20 + (int32_t)rr(55); R->drop = 8000 + (int32_t)rr(13000); }
     int32_t drop = 32767;
@@ -695,7 +696,7 @@ static AC void rev_step(int32_t in)
 }
 
 /* ------------------------------------------------------------ the block */
-static int32_t mixL[BLK], mixR[BLK], fxbuf[BLK], keysL[BLK], keysR[BLK];   /* the loops' bus and the keys' own bus */
+static int32_t mixL[BLK], mixR[BLK], fxbuf[BLK], keysL[BLK], keysR[BLK], wetL[BLK], wetR[BLK];   /* the loops' bus and the keys' own bus */
 static AC int32_t log2_q8(uint32_t x)        /* log2(x) x 256 for x >= 1 */
 {
     if (!x) return 0;
@@ -842,8 +843,8 @@ AC void sonar_render(int32_t *output, unsigned frames)
         int32_t ef = (int32_t)(ph + 1), rf = (int32_t)((ph & 3U) + 1);
         int32_t eL = e_prevL + (((e_outL - e_prevL) * ef) >> 3), eR = e_prevR + (((e_outR - e_prevR) * ef) >> 3);
         int32_t rL = r_prevL + (((r_outL - r_prevL) * rf) >> 2), rR = r_prevR + (((r_outR - r_prevR) * rf) >> 2);
-        mixL[i] += ((eL * fx_echo) >> 15) + ((rL * fx_rev) >> 15);
-        mixR[i] += ((eR * fx_echo) >> 15) + ((rR * fx_rev) >> 15);
+        wetL[i] = ((eL * fx_echo) >> 15) + ((rL * fx_rev) >> 15);   /* kept apart: the compressor hears only the dry tones */
+        wetR[i] = ((eR * fx_echo) >> 15) + ((rR * fx_rev) >> 15);
     }
 #ifdef FM1_HOST_TEST
     { uint32_t cost = dbg_units + dbg_rings * 4U; if (cost > (dbg_peak & 0xffff)) dbg_peak = cost | (dbg_voices << 16); }
@@ -868,9 +869,11 @@ AC void sonar_render(int32_t *output, unsigned frames)
     int32_t fade = (int32_t)(((int64_t)loops_fade * loops_fade) >> 15);   /* faded after the compressor, on a curve, so it really fades */
     fade = (int32_t)(((int64_t)fade * loops_gain) >> 15);                 /* LOOPS volume, also after the compressor, so it is a true volume */
     gg = (int32_t)(((int64_t)gg * fade) >> 15); gstep = (int32_t)(((int64_t)gstep * fade) >> 15);
-    int32_t mv = master_vol;
+    int32_t mv = master_vol, mv_wet = 24000;
+    loops_send = fade;   /* the space: a fixed gain, never the compressor's */
     for (unsigned i = 0; i < BLK; ++i) {
-        int32_t l = (int32_t)(((int64_t)mixL[i] * gg) >> 15) + ((keysL[i] * 52000) >> 15), r = (int32_t)(((int64_t)mixR[i] * gg) >> 15) + ((keysR[i] * 52000) >> 15);
+        int32_t l = (int32_t)(((int64_t)mixL[i] * gg) >> 15) + ((keysL[i] * 52000) >> 15) + ((wetL[i] * mv_wet) >> 15);
+        int32_t r = (int32_t)(((int64_t)mixR[i] * gg) >> 15) + ((keysR[i] * 52000) >> 15) + ((wetR[i] * mv_wet) >> 15);
         gg += gstep;
         int32_t hl = l - dc_xl + ((dc_yl * 32700 + 16384) >> 15), hr = r - dc_xr + ((dc_yr * 32700 + 16384) >> 15);   /* 10 Hz DC blocker */
         dc_xl = l; dc_yl = hl; dc_xr = r; dc_yr = hr;
@@ -1255,9 +1258,9 @@ SETUP void sonar_dsp_fx(void)
     unsigned m = sn_song.fx_mode & 3;
     float amt = sn_song.fx_amt / 100.f;
     int echo = m == SN_FX_ON || m == SN_FX_ECHO, rev = m == SN_FX_ON || m == SN_FX_VERB;
-    fx_echo_t = echo ? (int32_t)(.7f * amt * 32767.f) : 0;
+    fx_echo_t = echo ? (int32_t)(.32f * amt * 32767.f) : 0;
     fx_e2r_t = echo && rev ? 32767 / 2 : 0;
-    fx_rev_t = rev ? (int32_t)(1.35f * amt * 32767.f * .55f) : 0;
+    fx_rev_t = rev ? (int32_t)(.34f * amt * 32767.f) : 0;
     float vol = sn_song.vol / 100.f;
     master_vol = (int32_t)(vol * vol * 32767.f);
 }
