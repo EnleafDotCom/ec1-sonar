@@ -1202,7 +1202,7 @@ SETUP void sonar_dsp_tempo(void)
     echo_T = (int32_t)(T * 44100.f / ECHO_DEC * 256.f);
     for (unsigned r = 0; r < SN_LANES; ++r) sonar_dsp_ring(r);
 }
-static const float ring_vol[SN_LANES] = {.36f, .44f, .6f, .85f, .5f}, ring_gate[SN_LANES] = {3, 1.2f, 3.5f, 1, 1.5f}, auto_sp[SN_LANES] = {1, 1, .75f, .8f, .45f};
+static const float ring_vol[SN_LANES] = {.36f, .44f, .6f, .85f, .5f}, ring_gate[SN_LANES] = {3, 1.2f, 3.5f, 1, 1.5f}, auto_sp[SN_LANES] = {1, 1, .75f, .8f, .9f};
 static uint32_t fade_blocks[SN_LANES];
 SETUP void sonar_dsp_fade(unsigned r, unsigned b) { if (r < SN_LANES) fade_blocks[r] = b; }
 SETUP void sonar_dsp_ring(unsigned r)
