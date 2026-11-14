@@ -23,6 +23,8 @@ static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v;
 #define PICK(a) ((a)[rr((int)(sizeof(a) / sizeof((a)[0])))])
 
 /* ------------------------------------------------------------ the world */
+/* the starting balance: the keys a few dB above the loops, so they sing over them */
+enum { KEYS_DEFAULT_VOL = 80, LOOPS_DEFAULT_VOL = 80 };
 static const char *const mood_names[SN_MOODS] = {"DAWN", "TIDE", "DUSK", "DEEP", "ZEN", "FLOAT"};
 static const uint8_t mood_len[SN_MOODS] = {7, 5, 7, 7, 5, 6};
 static const char *const ring_names[SN_LANES] = {"HAZE", "GLINT", "DRONE", "PULSE", "KEYS"};
@@ -289,7 +291,7 @@ static void defaults(struct sn_ring *R, unsigned r)
     R->ch = ch[r]; R->len = len[r];
     R->p.oct = 0; R->p.mod = r == SN_HAZE ? 30 : 0; R->p.dec = dec[r]; R->p.wild = 50; R->p.lvl = 80;
     R->p.tone = tone[r]; R->p.era = era[r]; R->p.tape = 0; R->p.sp = 100; R->p.sp_on = 0; R->p.spd = spd[r];
-    if (r == SN_KEYS) { R->pad = 1; R->p.era = 5; R->p.tone = 72; R->p.wild = 40; }
+    if (r == SN_KEYS) { R->pad = 1; R->p.era = 5; R->p.tone = 72; R->p.wild = 40; R->p.lvl = KEYS_DEFAULT_VOL; }
 }
 /* the web app's moves: each shuffle also flips one thing, and says so */
 static void world_move(const struct world *W)
@@ -318,6 +320,10 @@ static void world_move(const struct world *W)
 static char world_line[48];
 void sonar_shuffle(void)
 {
+    /* every new world starts with the keys sitting above the loops */
+    sn_song.loops_vol = LOOPS_DEFAULT_VOL;
+    sn_song.r[SN_KEYS].p.lvl = KEYS_DEFAULT_VOL;
+    sonar_dsp_fx(); sonar_dsp_ring(SN_KEYS);
     sonar_snap(-1);
     const struct world *W = next_world();
     sn_song.mood = W->moods[rr(2)];
@@ -589,7 +595,7 @@ void sonar_fx_amt(int delta) { sn_song.fx_amt = (uint8_t)clampi(sn_song.fx_amt +
 void sonar_loops_volume(int delta)
 {
     sn_song.loops_vol = (uint8_t)clampi(sn_song.loops_vol + delta * 2, 0, 100);
-    for (unsigned r = 0; r < SN_RINGS; ++r) sonar_dsp_ring(r);
+    sonar_dsp_fx();
     ++sn_revision;
 }
 void sonar_volume(int delta) { sn_song.vol = (uint8_t)clampi(sn_song.vol + delta * 2, 0, 100); sonar_dsp_fx(); ++sn_revision; }
@@ -785,7 +791,7 @@ void sonar_init(uint32_t seed_value)
     memset(&sn_song, 0, sizeof sn_song);
     for (unsigned r = 0; r < SN_LANES; ++r) defaults(&sn_song.r[r], r);
     for (unsigned r = 0; r < SN_RINGS; ++r) sn_rt.pos[r] = -1;
-    sn_song.bpm = 30; sn_song.mut = 15; sn_song.fx_mode = SN_FX_ON; sn_song.fx_amt = 100; sn_song.vol = 100; sn_song.keys_lock = 1; sn_song.loops_vol = 80; sn_song.keys_atk = 50; sn_song.keys_rel = 50;
+    sn_song.bpm = 30; sn_song.mut = 15; sn_song.fx_mode = SN_FX_ON; sn_song.fx_amt = 100; sn_song.vol = 100; sn_song.keys_lock = 1; sn_song.loops_vol = LOOPS_DEFAULT_VOL; sn_song.keys_atk = 50; sn_song.keys_rel = 50;
     strcpy(sn_song.name, "EC-1 SONAR");
     sonar_dsp_init();
     if (store_boot()) {

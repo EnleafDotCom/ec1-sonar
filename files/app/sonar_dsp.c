@@ -79,6 +79,7 @@ struct ringdsp {
 static struct ringdsp rd[SN_LANES];
 static int32_t ring_bus[SN_LANES][BLK];
 static int32_t ring_tape_pe[SN_LANES];
+static volatile int32_t loops_gain = 32767;   /* LOOPS volume: 80 is as designed (Q15) */
 static volatile int32_t loops_fade = 32767, loops_fade_tgt = 32767, loops_fade_step;   /* PLAY held: the loops fade in or out */
 
 /* ------------------------------------------------------------ voices */
@@ -856,6 +857,7 @@ AC void sonar_render(int32_t *output, unsigned frames)
     target = (int32_t)(((int64_t)target * 26214) >> 15);
     int32_t gstep = (target - comp_gain) >> 7, gg = comp_gain;
     int32_t fade = (int32_t)(((int64_t)loops_fade * loops_fade) >> 15);   /* faded after the compressor, on a curve, so it really fades */
+    fade = (int32_t)(((int64_t)fade * loops_gain) >> 15);                 /* LOOPS volume, also after the compressor, so it is a true volume */
     gg = (int32_t)(((int64_t)gg * fade) >> 15); gstep = (int32_t)(((int64_t)gstep * fade) >> 15);
     int32_t mv = master_vol;
     for (unsigned i = 0; i < BLK; ++i) {
@@ -1198,7 +1200,6 @@ SETUP void sonar_dsp_ring(unsigned r)
     struct ringdsp *d = &rd[r];
     float lvl = R->p.lvl / 100.f, e = R->p.era / 100.f, a = R->p.tape / 100.f, tone = R->p.tone / 100.f;
     float g = R->mute ? 0.f : ring_vol[r] * lvl * 1.25f;
-    if (r < SN_RINGS) g *= sn_song.loops_vol / 80.f;          /* LOOPS VOL: 80 is as designed */
     int32_t tgt = (int32_t)(g * 32767.f);
     uint32_t fb = fade_blocks[r] ? fade_blocks[r] : 10;
     fade_blocks[r] = 0;
@@ -1241,6 +1242,7 @@ SETUP void sonar_dsp_ring(unsigned r)
 }
 SETUP void sonar_dsp_fx(void)
 {
+    loops_gain = (int32_t)(sn_song.loops_vol / 80.f * 32767.f);
     unsigned m = sn_song.fx_mode & 3;
     float amt = sn_song.fx_amt / 100.f;
     int echo = m == SN_FX_ON || m == SN_FX_ECHO, rev = m == SN_FX_ON || m == SN_FX_VERB;
