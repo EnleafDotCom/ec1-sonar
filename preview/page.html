@@ -1,0 +1,309 @@
+<title>ec–1 Sonar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one hardware panel (controls | LCD | controls) over a keyboard, a short field guide beneath. Single dark look: it is an instrument. */
+:root{
+  --room:#0d1114; --chassis:#232a2e; --chassis-hi:#2e363b; --well:#161b1e;
+  --ink:#e6ece9; --ink-dim:#8d9a97; --accent:#7eeac0; --warm:#ffb067;
+  --haze:#b48cff; --glint:#78dcff; --drone:#ffa850; --pulse:#78ffb8;
+  --key:#3c4a46; --key-hi:#4c5c57; --black:#1d2427;
+  --display:"Space Grotesk",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+body{background:var(--room);color:var(--ink);font:14px/1.5 var(--display)}
+.wrap{max-width:1080px;margin:0 auto;padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:18px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px}
+header h1{font-size:28px;margin:0;letter-spacing:.01em}
+header p{margin:0;color:var(--ink-dim)}
+.status{margin-left:auto;font:12px var(--mono);color:var(--ink-dim);display:flex;align-items:center;gap:8px}
+.status i{width:8px;height:8px;border-radius:50%;background:#555;display:inline-block}
+.status.on i{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.panel{background:linear-gradient(var(--chassis-hi),var(--chassis));border-radius:18px;padding:18px;display:grid;gap:16px;box-shadow:0 1px 0 #ffffff14 inset,0 20px 40px #0008}
+.top{display:grid;grid-template-columns:1fr auto 1fr;gap:18px;align-items:center}
+.side{display:grid;gap:14px;justify-items:center}
+.knobs{display:grid;grid-template-columns:repeat(2,auto);gap:12px 20px}
+.knobs.four{grid-template-columns:repeat(4,auto)}
+.knob{display:grid;justify-items:center;gap:6px;font:600 10px var(--mono);letter-spacing:.1em;color:var(--ink-dim);user-select:none;touch-action:none}
+.knob small{display:block;margin-top:-4px;font-weight:400;font-size:9px;letter-spacing:.04em;text-transform:none;opacity:.75}
+.knob button{width:52px;height:52px;border-radius:50%;border:0;cursor:ns-resize;background:radial-gradient(circle at 40% 35%,#5a6669,#2b3336 70%);box-shadow:0 4px 8px #0009,0 0 0 2px #0006;position:relative}
+.knob button::after{content:"";position:absolute;left:50%;top:6px;width:3px;height:14px;margin-left:-1.5px;border-radius:2px;background:var(--ink);transform-origin:50% 20px;transform:rotate(var(--a,0deg))}
+.knob button:focus-visible,.btn:focus-visible,.k:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.lcd{background:#000;border-radius:8px;padding:10px;box-shadow:0 0 0 3px #0b0e10,0 0 0 4px #ffffff14}
+.lcd canvas{display:block;width:min(360px,62vw);aspect-ratio:1;image-rendering:pixelated}
+.btns{display:grid;grid-template-columns:repeat(6,auto);gap:8px}
+.btn{min-width:52px;height:40px;border:0;border-radius:7px;background:linear-gradient(#4a5558,#384245);color:var(--ink);font:700 11px var(--mono);letter-spacing:.06em;cursor:pointer;box-shadow:0 3px 0 #1a2023}
+.btn:active,.btn.down{transform:translateY(2px);box-shadow:0 1px 0 #1a2023}
+.btn.play{background:linear-gradient(#3f7a63,#2d5c4a)}
+.btn.rec{color:#ff9d8f}
+.btn small{display:block;font-weight:400;font-size:9px;opacity:.7}
+.octs{display:flex;gap:8px}
+.keys{background:var(--well);border-radius:12px;padding:12px;display:grid;gap:8px}
+.row{display:grid;grid-template-columns:repeat(32,1fr);gap:0}
+.k{border:0;cursor:pointer;color:var(--ink-dim);font:600 9px var(--mono);letter-spacing:.04em;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;touch-action:none;user-select:none}
+.k.b{grid-column:span 2;height:64px;margin:0 3px;border-radius:10px;background:var(--black);box-shadow:0 3px 0 #0a0d0e;color:#a9c3bb}
+.k.w{grid-column:span 2;height:92px;margin:0 3px;border-radius:12px;background:linear-gradient(var(--key-hi),var(--key));box-shadow:0 4px 0 #1d2526}
+.k.down{filter:brightness(1.45);transform:translateY(2px)}
+.gap{grid-column:span 2}
+.guide{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px 28px}
+.guide section{min-width:0}
+.guide h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-dim);margin:0 0 6px}
+.guide dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0}
+.guide dt{font:600 12px var(--mono);color:var(--accent)}
+.guide dd{margin:0;color:var(--ink)}
+.guide p,.guide ol{margin:0;color:var(--ink)}
+.guide ol{padding-left:18px}
+.rings b{margin-right:8px}
+kbd{font:12px var(--mono);background:#ffffff14;border-radius:4px;padding:0 4px}
+@media (max-width:820px){
+  .top{grid-template-columns:1fr;justify-items:center}
+  .lcd{order:-1}
+  .lcd canvas{width:min(360px,80vw)}
+  .knobs.four{grid-template-columns:repeat(4,auto)}
+  .k.b{font-size:0;height:48px;margin:0 1px}
+  .k.w{height:72px;margin:0 1px;font-size:0}
+  .btns{grid-template-columns:repeat(4,auto)}
+}
+@media (prefers-reduced-motion:reduce){.btn,.k{transition:none}}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>ec–1 Sonar</h1>
+    <p>FM-1 firmware, running in your browser exactly as it will on the hardware. Only the FM-1's own controls are here.</p>
+    <div class="status" id="status"><i></i><span id="statusText">Press PLAY to start sound</span></div>
+  </header>
+
+  <div class="panel" id="panel">
+    <div class="top">
+      <div class="side">
+        <div class="knobs">
+          <div class="knob" data-enc="master"><button aria-label="Master volume" style="--a:120deg"></button>MASTER</div>
+          <div class="knob" data-enc="0"><button aria-label="Select ring"></button>SELECT</div>
+          <div class="knob" data-enc="6"><button aria-label="Presets: track sound"></button>PRESETS<small>track sound</small></div>
+          <div class="knob" data-enc="1"><button aria-label="Algorithm: keys sound"></button>ALGORITHM<small>keys sound</small></div>
+        </div>
+        <div class="octs"><button class="btn" data-btn="0">OCT −<small>keys</small></button><button class="btn" data-btn="1">OCT +<small>keys</small></button></div>
+      </div>
+      <div class="lcd"><canvas id="lcd" width="240" height="240" aria-label="FM-1 screen"></canvas></div>
+      <div class="side">
+        <div class="knobs four">
+          <div class="knob" data-enc="2"><button aria-label="Knob 1"></button>K1</div>
+          <div class="knob" data-enc="3"><button aria-label="Knob 2"></button>K2</div>
+          <div class="knob" data-enc="4"><button aria-label="Knob 3"></button>K3</div>
+          <div class="knob" data-enc="5"><button aria-label="Knob 4"></button>K4</div>
+        </div>
+        <div class="btns">
+          <button class="btn" data-btn="2">FX<small>space</small></button>
+          <button class="btn" data-btn="3">SCL<small>new world</small></button>
+          <button class="btn" data-btn="4">ENV<small>shape</small></button>
+          <button class="btn" data-btn="5">LFO<small>tape</small></button>
+          <button class="btn" data-btn="6">EDIT<small>sound</small></button>
+          <button class="btn" data-btn="7">GLO<small>mix</small></button>
+          <button class="btn" data-btn="8">HOME<small>world</small></button>
+          <button class="btn" data-btn="9">SAVE</button>
+          <button class="btn" data-btn="10">ARP<small>drift</small></button>
+          <button class="btn" data-btn="11">SEQ<small>steps</small></button>
+          <button class="btn play" data-btn="12">PLAY<small>stop</small></button>
+          <button class="btn rec" data-btn="13">REC<small>write</small></button>
+        </div>
+      </div>
+    </div>
+    <div class="keys" id="keys"></div>
+  </div>
+
+  <div class="guide">
+    <section>
+      <h2>Start</h2>
+      <ol>
+        <li>Press <b>PLAY</b>. Hold it for a second instead to fade the loops in; hold it again to fade out and stop.</li>
+        <li>Play any key over the soundtrack: all 27 are notes.</li>
+        <li>Press <b>SCL</b> for a new world, <b>ARP</b> to let it drift.</li>
+      </ol>
+    </section>
+    <section>
+      <h2>Hold SAVE for shortcuts</h2>
+      <dl>
+        <dt>+ SCL</dt><dd>undo</dd>
+        <dt>+ PLAY</dt><dd>every loop back to step 1</dd>
+        <dt>+ REC</dt><dd>clear the selected track</dd>
+        <dt>+ K1–K4</dt><dd>haze, glint, drone, pulse levels</dd>
+      </dl>
+      <p>A tap of SAVE on its own saves the song. Every knob names what it changed on the screen's bottom line.</p>
+    </section>
+    <section>
+      <h2>The screen</h2>
+      <p class="rings"><b style="color:var(--haze)">haze</b><b style="color:var(--glint)">glint</b><b style="color:var(--drone)">drone</b><b style="color:var(--pulse)">pulse</b><b style="color:#ffdc96">keys</b></p>
+      <p>Each track is a lane of 16 steps; the lit column is where it is playing. The last lane is the keyboard. <b>SELECT</b> picks a track and <b>PRESETS</b> changes its sound; <b>ALGORITHM</b> picks the pad you play. On the main screen <b>K1</b> is the keys volume and <b>K2</b> the loops volume; <b>MASTER</b> sets both.</p>
+    </section>
+    <section>
+      <h2>Buttons</h2>
+      <dl>
+        <dt>SEQ</dt><dd>steps of the track: whites are steps, blacks mute, new loop, clear, remix, undo, shift</dd>
+        <dt>HOME</dt><dd>world: saved songs on whites, shuffle, undo, wipe, mood, space on blacks</dd>
+        <dt>EDIT</dt><dd>a track's sound and loop. With SELECT on KEYS: the WAVE page, drawn on screen (pad, wave, detune, chord)</dd>
+        <dt>ENV · LFO</dt><dd>shape · tape and tone. On KEYS: the ENVELOPE graph (attack, release, hold, volume) · TONE (tone, vibrato, space, scale)</dd>
+        <dt>FX · GLO</dt><dd>space · mix</dd>
+        <dt>REC</dt><dd>keys write into the selected track</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Computer keyboard</h2>
+      <p>Play like a piano: <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> … are white keys, <kbd>W</kbd> <kbd>E</kbd> <kbd>T</kbd> … the black ones. <kbd>Space</kbd> is PLAY, <kbd>←</kbd> <kbd>→</kbd> turn SELECT. Drag or scroll a knob, or tap its left or right half.</p>
+    </section>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+const WASM_B64='/*WASM*/';
+const WHITE=[0,2,4,6,7,9,11,12,14,16,18,19,21,23,24,26];
+const BLACK={1:'F#',3:'G#',5:'A#',8:'C#',10:'D#',13:'F#',15:'G#',17:'A#',20:'C#',22:'D#',25:'F#'};
+const WNAME=['F','G','A','B','C','D','E','F','G','A','B','C','D','E','F','G'];
+const $=id=>document.getElementById(id);
+let e, blockFrames=128;
+
+/* the firmware */
+function boot(){
+  const bin=Uint8Array.from(atob(WASM_B64),c=>c.charCodeAt(0));
+  e=new WebAssembly.Instance(new WebAssembly.Module(bin),{}).exports;
+  e._initialize(); blockFrames=e.sim_block_frames();
+  e.sim_boot(1);
+  let saved=null; try{const s=localStorage.getItem('ec1-songs'); if(s) saved=Uint8Array.from(atob(s),c=>c.charCodeAt(0));}catch(err){}
+  if(saved&&saved.length===32768){ new Uint8Array(e.memory.buffer,e.sim_flash(),32768).set(saved); e.sim_boot(0); }
+  e.sim_control(3,0,master);
+}
+let master=880;
+/* controls reach the firmware between audio blocks; each one is held long enough for the panel scan to see it */
+const queue=[]; let hold=0, clearEnc=-1, rendered=0, peak=0;
+window.ec1Stats=()=>({rendered,peak,state:ctx&&ctx.state});
+function send(kind,index,value){queue.push([kind,index,value]);}
+function renderBlock(){
+  if(hold<=0&&queue.length){const [k,i,v]=queue.shift(); e.sim_control(k,i,v); hold=4; if(k===2) clearEnc=i;}
+  const p=e.sim_render(); rendered++;
+  if(hold>0&&--hold===0&&clearEnc>=0){e.sim_control(2,clearEnc,0); clearEnc=-1;}
+  return p;
+}
+
+/* sound: the firmware renders 44.1 kHz blocks, resampled to the device rate */
+let ctx=null, blk=null, bi=0, aL=0, aR=0, bL=0, bR=0, t=0;
+function nextFrame(){
+  if(!blk||bi>=blockFrames){ blk=new Float32Array(e.memory.buffer,renderBlock(),blockFrames*2); bi=0; }
+  aL=bL; aR=bR; bL=blk[bi*2]; bR=blk[bi*2+1]; bi++;
+}
+function startAudio(){
+  if(ctx){ if(ctx.state!=='running') ctx.resume(); return; }
+  const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+  try{ ctx=new AC({sampleRate:44100,latencyHint:'playback'}); }catch(err){ ctx=new AC(); }
+  const sp=ctx.createScriptProcessor(2048,0,2), step=44100/ctx.sampleRate;
+  sp.onaudioprocess=ev=>{
+    const L=ev.outputBuffer.getChannelData(0), R=ev.outputBuffer.getChannelData(1);
+    for(let i=0;i<L.length;i++){
+      while(t>=1){ t-=1; nextFrame(); blk=blk&&blk.buffer!==e.memory.buffer?null:blk; }
+      L[i]=aL+(bL-aL)*t; R[i]=aR+(bR-aR)*t; t+=step; if(L[i]>peak) peak=L[i];
+    }
+  };
+  sp.connect(ctx.destination);
+  if(ctx.resume) ctx.resume();
+  ctx.onstatechange=status;
+  status();
+}
+function status(){
+  const on=ctx&&ctx.state==='running';
+  $('status').classList.toggle('on',!!on);
+  $('statusText').textContent=on?'Sound on':ctx?'Sound paused: press any control':'Press PLAY to start sound';
+}
+/* without sound, time still runs so the screen keeps moving */
+let last=performance.now();
+setInterval(()=>{
+  const now=performance.now(), ms=now-last; last=now;
+  if(ctx&&ctx.state==='running') return;
+  const n=Math.min(40,Math.round(ms*44.1/blockFrames)); for(let i=0;i<n;i++) renderBlock();
+},20);
+
+/* the screen */
+const lcd=$('lcd').getContext('2d'), img=lcd.createImageData(240,240); let shown=-1;
+function frame(){
+  const rev=e.sim_frame_revision();
+  if(rev!==shown){
+    shown=rev;
+    const px=new Uint16Array(e.memory.buffer,e.sim_pixels(),57600), d=img.data;
+    for(let i=0,j=0;i<57600;i++,j+=4){const c=px[i]; d[j]=(c>>11)*527+23>>6; d[j+1]=((c>>5)&63)*259+33>>6; d[j+2]=(c&31)*527+23>>6; d[j+3]=255;}
+    lcd.putImageData(img,0,0);
+  }
+  persist();
+  requestAnimationFrame(frame);
+}
+let flashRev=-1, flashAt=0;
+function persist(){
+  const r=e.sim_flash_revision(); if(r===flashRev) return;
+  const now=performance.now(); if(flashRev>=0&&now-flashAt<1500) return;
+  flashRev=r; flashAt=now;
+  try{const b=new Uint8Array(e.memory.buffer,e.sim_flash(),32768); let s=''; for(let i=0;i<b.length;i+=8192) s+=String.fromCharCode.apply(null,b.subarray(i,i+8192)); localStorage.setItem('ec1-songs',btoa(s));}catch(err){}
+}
+
+/* the panel */
+function wake(){ startAudio(); }
+function press(el,kind,index){
+  const down=ev=>{ev.preventDefault(); wake(); el.classList.add('down'); send(kind,index,1); el.setPointerCapture&&el.setPointerCapture(ev.pointerId);};
+  const up=()=>{ if(!el.classList.contains('down')) return; el.classList.remove('down'); send(kind,index,0); };
+  el.addEventListener('pointerdown',down); el.addEventListener('pointerup',up); el.addEventListener('pointercancel',up); el.addEventListener('lostpointercapture',up);
+  el.addEventListener('keydown',ev=>{ if((ev.key===' '||ev.key==='Enter')&&!ev.repeat&&!el.classList.contains('down')){ev.preventDefault(); wake(); el.classList.add('down'); send(kind,index,1);} });
+  el.addEventListener('keyup',ev=>{ if(ev.key===' '||ev.key==='Enter'){ev.preventDefault(); up();} });
+}
+document.querySelectorAll('[data-btn]').forEach(b=>press(b,0,+b.dataset.btn));
+const keys=$('keys'), rowB=document.createElement('div'), rowW=document.createElement('div'); rowB.className=rowW.className='row';
+const keyEls={};
+for(let k=0;k<27;k++){
+  if(WHITE.includes(k)){ const b=document.createElement('button'); b.className='k w'; const n=WHITE.indexOf(k); b.textContent=WNAME[n]; b.setAttribute('aria-label','Key '+WNAME[n]+' (step '+(n+1)+')'); press(b,1,k); rowW.append(b); keyEls[k]=b; }
+}
+/* black keys sit between whites: place them on the 32-column grid */
+let col=0; const blackCols={};
+WHITE.forEach((k,i)=>{ if(BLACK[k+1]) blackCols[k+1]=i*2+2; }); blackCols[25]=31;
+let at=1;
+Object.keys(BLACK).map(Number).forEach(k=>{
+  const c=blackCols[k]; if(c>at){ const g=document.createElement('div'); g.style.gridColumn='span '+(c-at); rowB.append(g); at=c; }
+  const b=document.createElement('button'); b.className='k b'; b.textContent=BLACK[k]; b.setAttribute('aria-label',BLACK[k]); press(b,1,k); rowB.append(b); at+=2; keyEls[k]=b;
+});
+keys.append(rowB,rowW);
+
+/* knobs: drag, scroll, or tap a half */
+document.querySelectorAll('.knob').forEach(kn=>{
+  const btn=kn.querySelector('button'), enc=kn.dataset.enc; let angle=enc==='master'?120:0;
+  const turn=d=>{
+    wake();
+    if(enc==='master'){ master=Math.max(0,Math.min(1023,master+d*40)); e.sim_control(3,0,master); angle=-135+master/1023*270; }
+    else { send(2,+enc,d>0?1:-1); angle+=d>0?15:-15; }
+    btn.style.setProperty('--a',angle+'deg');
+  };
+  let y0=null, moved=false, acc=0;
+  btn.addEventListener('pointerdown',ev=>{ev.preventDefault(); y0=ev.clientY; moved=false; acc=0; btn.setPointerCapture(ev.pointerId);});
+  btn.addEventListener('pointermove',ev=>{ if(y0===null) return; acc+=y0-ev.clientY; y0=ev.clientY; while(Math.abs(acc)>=10){ moved=true; turn(acc>0?1:-1); acc-=acc>0?10:-10; } });
+  btn.addEventListener('pointerup',ev=>{ if(y0!==null&&!moved){ const r=btn.getBoundingClientRect(); turn(ev.clientX<r.left+r.width/2?-1:1); } y0=null; });
+  btn.addEventListener('pointercancel',()=>{y0=null;});
+  btn.addEventListener('wheel',ev=>{ev.preventDefault(); turn(ev.deltaY<0?1:-1);},{passive:false});
+  btn.addEventListener('keydown',ev=>{ if(ev.key==='ArrowUp'||ev.key==='ArrowRight'){ev.preventDefault();turn(1);} if(ev.key==='ArrowDown'||ev.key==='ArrowLeft'){ev.preventDefault();turn(-1);} });
+});
+
+/* computer keyboard */
+const KB='awsedftgyhujkolp;'.split(''), KB2='q2w3er5t6y7ui9o0p'.split('');
+const map={a:2,w:3,s:4,e:5,d:6,f:7,t:8,g:9,y:10,h:11,j:12,u:13,k:14,o:15,l:16,p:17,';':18};   /* piano rows: A is G, W is G sharp */
+const held={};
+addEventListener('keydown',ev=>{
+  if(ev.target.closest&&ev.target.closest('button')&&(ev.key===' '||ev.key==='Enter')) return;
+  if(ev.metaKey||ev.ctrlKey||ev.altKey||ev.repeat) return;
+  const c=ev.key.toLowerCase();
+  if(c===' '){ev.preventDefault(); wake(); send(0,12,1); send(0,12,0); return;}
+  if(ev.key==='ArrowLeft'||ev.key==='ArrowRight'){ if(document.activeElement&&document.activeElement.closest('.knob')) return; ev.preventDefault(); wake(); send(2,0,ev.key==='ArrowRight'?1:-1); return; }
+  if(map[c]!==undefined&&!held[c]){ held[c]=1; wake(); send(1,map[c],1); keyEls[map[c]].classList.add('down'); }
+});
+addEventListener('keyup',ev=>{ const c=ev.key.toLowerCase(); if(held[c]){ delete held[c]; send(1,map[c],0); keyEls[map[c]].classList.remove('down'); } });
+void KB; void KB2; void col;
+
+try{ boot(); }catch(err){ $('statusText').textContent='This browser could not start the firmware: '+err.message; return; }
+requestAnimationFrame(frame);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&ctx&&ctx.state!=='running') status(); });
+})();
+</script>

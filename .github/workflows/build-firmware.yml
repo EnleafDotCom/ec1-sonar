@@ -1,0 +1,105 @@
+name: Build ec-1 Sonar firmware
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Get the ec-1 Sonar files
+        uses: actions/checkout@v4
+        with:
+          path: ec1
+
+      - name: Get M-VAVE FM1 Open (V14)
+        uses: actions/checkout@v4
+        with:
+          repository: m-vave/fm1_open
+          ref: 4c7496daac04a95ff10d1afdcc8f9ead2dbabc41
+          path: fm1
+
+      - name: Add ec-1 Sonar to FM1 Open
+        run: cp -r ec1/files/. fm1/
+
+      - name: Get JieLi's Linux compiler
+        run: |
+          mkdir -p "$RUNNER_TEMP/jieli"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/toolchain.tar.xz" https://pkgman.jieliapp.com/s/linux-toolchain
+          tar -xJf "$RUNNER_TEMP/toolchain.tar.xz" -C "$RUNNER_TEMP/jieli"
+          CLANG=$(find "$RUNNER_TEMP/jieli" -path '*pi32v2/bin/clang' -type f | head -n 1)
+          if [ -z "$CLANG" ]; then CLANG=$(find "$RUNNER_TEMP/jieli" -path '*/bin/clang' -type f | head -n 1); fi
+          if [ -z "$CLANG" ]; then echo "No clang found"; find "$RUNNER_TEMP/jieli" -maxdepth 3; exit 1; fi
+          "$CLANG" --version
+          echo "FM1_PI32_TOOLCHAIN=$(dirname "$(dirname "$CLANG")")" >> "$GITHUB_ENV"
+          LD=$(find "$RUNNER_TEMP/jieli" -path '*/pi32v2/bin/ld' -type f | head -n 1)
+          NM=$(find "$RUNNER_TEMP/jieli" -path '*/pi32v2/bin/nm' -type f | head -n 1)
+          echo "FM1_LD=$LD" >> "$GITHUB_ENV"
+          echo "FM1_NM=$NM" >> "$GITHUB_ENV"
+
+      - name: Build the firmware and the installer page
+        shell: pwsh
+        working-directory: fm1
+        env:
+          FM1_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: ./sdk/Build.ps1 -Package
+      - name: List toolchain tools
+        if: always()
+        run: |
+          find "$RUNNER_TEMP/jieli" -type f -path '*/bin/*' | sort
+          find "$RUNNER_TEMP/jieli" -maxdepth 3 -type d | sort
+          NM=$(find "$RUNNER_TEMP/jieli" -path '*/pi32v2/bin/nm' -type f | head -n 1)
+          "$NM" --print-size --size-sort -r fm1/build/dx7/sdk.elf | head -n 60 || true
+          OBJDUMP=$(find "$RUNNER_TEMP/jieli" -path '*/common/bin/objdump' -type f | head -n 1)
+          "$OBJDUMP" -h fm1/build/dx7/sdk.elf || true
+      - name: Get plain upstream FM1 Open for comparison
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          repository: m-vave/fm1_open
+          ref: 4c7496daac04a95ff10d1afdcc8f9ead2dbabc41
+          path: fm1base
+      - name: Show what ec-1 Sonar changes
+        if: always()
+        run: |
+          cd ec1/files
+          for f in $(find . -type f | sort); do b=../../fm1base/$f; if [ -f $b ]; then echo "REPLACES $f $(wc -c < $f) vs $(wc -c < $b)"; else echo "NEW $f $(wc -c < $f)"; fi; done
+      - name: Build plain upstream for comparison
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        working-directory: fm1base
+        run: |
+          Copy-Item ../ec1/files/sdk/Build.ps1 sdk/Build.ps1 -Force
+          Copy-Item ../ec1/files/sdk/manifest.json sdk/manifest.json -Force
+          ./sdk/Build.ps1
+      - name: Compare symbols, ec-1 Sonar vs plain upstream
+        if: always()
+        continue-on-error: true
+        run: |
+          NM=$(find "$RUNNER_TEMP/jieli" -path '*/pi32v2/bin/nm' -type f | head -n 1)
+          "$NM" --print-size fm1base/build/dx7/sdk.elf | awk 'NF==4 && $3 !~ /^[bB]$/ {print $2, $3, $4}' | sort -r > base.txt
+          "$NM" --print-size fm1/build/dx7/sdk.elf | awk 'NF==4 && $3 !~ /^[bB]$/ {print $2, $3, $4}' | sort -r > ec1.txt
+          echo "=== only in ec-1 Sonar (size type name) ==="
+          awk 'NR==FNR {s[$3]=1; next} !($3 in s)' base.txt ec1.txt | head -n 45
+          echo "=== largest in plain upstream ==="
+          head -n 45 base.txt
+
+      - name: Name the files
+        run: |
+          mkdir -p out
+          cp fm1/build/dx7/generated/FM1_OFFICIAL_OPEN.fwsc out/ec1-sonar.fwsc
+          cp fm1/build/official-web/FM1-Official-Open-Source.html out/ec1-sonar-FM1-Installer.html
+
+      - name: Keep the installer page
+        uses: actions/upload-artifact@v4
+        with:
+          name: ec1-sonar-installer
+          path: out/ec1-sonar-FM1-Installer.html
+
+      - name: Keep the firmware file
+        uses: actions/upload-artifact@v4
+        with:
+          name: ec1-sonar-firmware
+          path: out/ec1-sonar.fwsc
