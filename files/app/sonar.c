@@ -10,6 +10,7 @@ struct sn_song sn_song;
 struct sn_runtime sn_rt;
 const char *sn_notice;
 uint32_t sn_revision;
+uint32_t sn_diag_late, sn_diag_budget = 80;   /* shown on WORLD: late audio blocks since start, the voice work budget */
 uint8_t sn_first_boot, sn_drifting, sn_catching = 0, sn_slot, sn_brush_y = 77;
 
 /* ------------------------------------------------------------ randomness */
@@ -805,15 +806,16 @@ void sonar_poll(uint32_t now)
      * itself rises slowly, so it settles below the edge instead of testing it.
      * Late blocks right after a Flash write are the write's, not the voices'. */
     {
-        static uint32_t seen, checked, calm_since, started, ceiling_at;
+        static uint32_t seen, checked, calm_since, started, ceiling_at, sn_diag_base;
         static int32_t budget = 80, ceiling = 110;
         if (!started) { started = now ? now : 1; calm_since = ceiling_at = now; }
         if (now - checked >= 100U && now - started >= 2000U) {
             checked = now;
             struct fm1_audio_stats st; fm1_audio_stats_read(&st);
             uint32_t ov = st.overruns | 0x80000000U;
-            if (!seen) seen = ov;
-            else if (ov != seen) {
+            if (!seen) { seen = ov; sn_diag_base = st.overruns; }
+            sn_diag_late = st.overruns - sn_diag_base; sn_diag_budget = (uint32_t)budget;
+            if (ov != seen) {
                 seen = ov;
                 if (!(flash_at && now - flash_at < 1500U)) {
                     budget = budget > 34 ? budget - 10 : 24;

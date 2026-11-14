@@ -128,6 +128,7 @@ const char *sonar_sound_name(unsigned r);
 const char *sonar_mood_name(void);
 const char *sonar_fx_name(void);
 const char *sonar_note_name(unsigned r, unsigned d);
+extern uint32_t sn_diag_late, sn_diag_budget;
 extern uint8_t sn_drifting, sn_catching, sn_slot, sn_brush_y, sn_first_boot;
 void sonar_fade(int in);          /* PLAY held: fade the loops in from silence, or out and stop */
 extern const char *sn_notice;

@@ -411,6 +411,17 @@ static void sn_draw_knob_page(void)
             text(6, 168, "HOLD SAVE: +SCL UNDO +PLAY RESTART", 1, DIM, BACK);
             text(6, 180, "+REC CLEAR TRACK  +K1-K4 LEVELS", 1, DIM, BACK);
         }
+        {   /* audio health, for tracking down glitches: late blocks since start, the voice budget */
+            uint32_t sig = (sn_diag_late << 8) ^ sn_diag_budget;
+            if (cache->tile_cache[2] != sig) {
+                cache->tile_cache[2] = sig;
+                char line[40], b[8]; memset(line, 0, sizeof line);
+                strcpy(line, "AUDIO LATE "); sn_num(b, (int)sn_diag_late); strcat(line, b);
+                strcat(line, "  LOAD "); sn_num(b, (int)sn_diag_budget); strcat(line, b);
+                paint_fill(130, 106, 110, 9, BACK);
+                text(130, 106, line + 6, 1, sn_diag_late ? AMBER : GREEN, BACK);
+            }
+        }
         knob(0, "K1 DRIFT", sn_drifting ? "ON" : "OFF", sn_drifting ? AMBER : DIM);
         knob(1, "K2 MOOD", sonar_mood_name(), TEXT);
         sn_knob_num(2, "K3 MUTATE", sn_song.mut, TEXT);

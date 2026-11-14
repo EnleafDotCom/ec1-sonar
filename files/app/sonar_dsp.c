@@ -17,7 +17,7 @@
 /* The control task's table building is kept small; the audio path stays fast. */
 #define SETUP __attribute__((minsize))
 
-enum { FS = 44100, BLK = 128, VOICES = 16, NOSC = 6, EVQ = 16, LIVEQ = 16 };
+enum { FS = 44100, BLK = 128, VOICES = 18, NOSC = 6, EVQ = 16, LIVEQ = 16 };
 enum { ECHO_LEN = 16384, ECHO_DEC = 8 };
 static volatile int32_t work_budget = 80;   /* voice work per block, tuned live by the control task: see sonar_render */            /* the echo runs at 5.5 kHz: its loop is darker than that */
 enum { REV_DEC = 4 };                                /* the hall runs at 11 kHz */
@@ -164,15 +164,24 @@ static AC int midi_of(int base, int d, unsigned mood)
 }
 
 /* ------------------------------------------------------------ starting notes */
+#ifdef FM1_HOST_TEST
+static uint32_t dbg_steals, dbg_steal_amp, dbg_steal_dying, dbg_kills;
+__attribute__((export_name("sonar_dbg2"))) uint32_t sonar_dbg2(int w) { uint32_t r = w == 0 ? dbg_steals : w == 1 ? dbg_steal_amp : w == 2 ? dbg_kills : dbg_steal_dying; if (w == 3) { dbg_steals = dbg_steal_amp = dbg_kills = dbg_steal_dying = 0; } return r; }
+#endif
 static AC struct voice *grab(void)
 {
     struct voice *best = &v[0];
     int32_t best_score = 0x7fffffff;
     for (unsigned i = 0; i < VOICES; ++i) {
         if (!v[i].on) return &v[i];
-        int32_t s = v[i].amp + (v[i].stage < 2 ? 1 << 20 : 0);
+        /* already fading out is best (nearly silent by now), then a tail, then the softest note */
+        int32_t s = v[i].amp + (v[i].dying ? 0 : v[i].stage < 2 ? 1 << 21 : 1 << 20);
         if (s < best_score) { best_score = s; best = &v[i]; }
     }
+#ifdef FM1_HOST_TEST
+    if (best->amp > 300) { ++dbg_steals; if ((uint32_t)best->amp > dbg_steal_amp) dbg_steal_amp = (uint32_t)best->amp; }
+    if (best->dying) ++dbg_steal_dying;
+#endif
     return best;
 }
 /* the work a voice takes per block: its oscillators, filters and noise */
@@ -737,6 +746,24 @@ AC void sonar_render(int32_t *output, unsigned frames)
         ring_tape_pe[r] = ((lfo(R->wph) * R->wow) >> 13) + ((lfo(R->fph) * R->flut) >> 13) + ((lfo(R->dph) * R->wdrift) >> 13);
         for (unsigned i = 0; i < BLK; ++i) ring_bus[r][i] = 0;
     }
+    /* Free voices in advance: when fewer than three are free (or fading), the
+     * quietest starts a short fade, so a new note never has to cut one off (four kept spare). */
+    {
+        unsigned spare = 0;
+        for (unsigned i = 0; i < VOICES; ++i) if (!v[i].on || v[i].dying) ++spare;
+        while (spare < 4) {
+            struct voice *q = 0; int32_t best = 0x7fffffff;
+            for (unsigned i = 0; i < VOICES; ++i) {
+                struct voice *x = &v[i];
+                if (!x->on || x->dying || x->burst) continue;
+                int32_t s = x->amp >> (x->stage == 2 ? 2 : 0);
+                if (s < best) { best = s; q = x; }
+            }
+            if (!q) break;
+            q->stage = 2; q->kr = 26000; q->rel_left = 8; q->gate = 0; q->dying = 1;   /* gone in about 20 ms */
+            ++spare;
+        }
+    }
     /* The work budget. The FM-1 must finish every block in time or the output
      * buzzes, so when too many voices would sound, the quietest fade out within
      * one block: fading tails first, then the softest notes. */
@@ -754,6 +781,9 @@ AC void sonar_render(int32_t *output, unsigned frames)
             }
             if (!q) break;
             cost -= voice_cost(q);
+#ifdef FM1_HOST_TEST
+            if (q->amp > 300) ++dbg_kills;
+#endif
             q->stage = 2; q->kr = 31500; q->rel_left = 10; q->gate = 0; q->dying = 1;   /* fades out over about 15 ms: no pop */
         }
     }
