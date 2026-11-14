@@ -583,7 +583,7 @@ const char *sonar_keys_chord_name(void) { return chord_names[sn_song.r[SN_KEYS].
 /* how much of a track goes to the space: its own setting, or the designed amount (AUTO) */
 unsigned sonar_space_send(unsigned r)
 {
-    static const uint8_t auto_pct[SN_LANES] = {100, 100, 75, 80, 90};
+    static const uint8_t auto_pct[SN_LANES] = {100, 100, 75, 80, 45};   /* the keys sit closer, with less space */
     if (r >= SN_LANES) return 0;
     return sn_song.r[r].p.sp_on ? sn_song.r[r].p.sp : auto_pct[r];
 }
