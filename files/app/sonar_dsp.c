@@ -12,8 +12,9 @@
 
 #define AC FM1_AUDIO_CODE
 
-enum { FS = 44100, BLK = 128, VOICES = 20, NOSC = 6, EVQ = 16, LIVEQ = 16 };
-enum { ECHO_LEN = 16384, ECHO_DEC = 8 };            /* the echo runs at 5.5 kHz: its loop is darker than that */
+enum { FS = 44100, BLK = 128, VOICES = 16, NOSC = 6, EVQ = 16, LIVEQ = 16 };
+enum { ECHO_LEN = 16384, ECHO_DEC = 8 };
+static volatile int32_t work_budget = 80;   /* voice work per block, tuned live by the control task: see sonar_render */            /* the echo runs at 5.5 kHz: its loop is darker than that */
 enum { REV_DEC = 4 };                                /* the hall runs at 11 kHz */
 enum { RL0 = 1123, RL1 = 1447, RL2 = 1693, RL3 = 1949, AP0 = 142, AP1 = 379 };
 enum { W_OFF, W_SINE, W_SAW, W_SQR, W_P25, W_P12, W_TRI, W_VOX, W_TRI4, W_POLY4, W_POLY5, W_PLUCK };
@@ -78,7 +79,7 @@ static volatile int32_t loops_fade = 32767, loops_fade_tgt = 32767, loops_fade_s
 /* ------------------------------------------------------------ voices */
 struct osc { uint32_t ph, inc; int32_t ratio, lvl, dk; uint8_t w, route; };
 struct voice {
-    uint8_t on, ring, stage, key, fm, fmode, nmode, n, stages, burst, kind;
+    uint8_t on, ring, stage, key, fm, fmode, nmode, n, stages, burst, kind, has_ring;
     struct osc o[NOSC];
     int32_t note;                      /* note x 256 */
     int32_t pe, pe_step, pe_k, pe_n;
@@ -168,6 +169,11 @@ static AC struct voice *grab(void)
         if (s < best_score) { best_score = s; best = &v[i]; }
     }
     return best;
+}
+/* the work a voice takes per block: its oscillators, filters and noise */
+static AC int32_t voice_cost(const struct voice *x)
+{
+    return (int32_t)x->n + (x->fmode ? 2 * (int32_t)x->stages : 0) + (x->nmode ? 2 : 0) + (x->has_ring ? 1 : 0) + 1;
 }
 static AC void clear_voice(struct voice *x)
 {
@@ -468,7 +474,7 @@ static AC int voice_block(struct voice *x, int32_t *bus, int32_t tape_pe)
         if (x->stage == 0) { x->amp += x->atk_step; if (x->amp >= x->pk || x->age >= x->atk) { x->amp = x->pk; x->stage = 1; } }
         else if (x->stage == 1) { int32_t s = (int32_t)(((int64_t)x->pk * x->sus) >> 15); x->amp = s + kmul(x->amp - s, x->kd); }
         else { x->amp = kmul(x->amp, x->kr); if (--x->rel_left <= 0) return 0; }
-        if (x->stage > 0 && x->amp < 3 && (x->stage == 2 || x->sus == 0) && x->age > x->atk + 4) return 0;
+        if (x->stage > 0 && x->amp < 24 && (x->stage == 2 || x->sus == 0) && x->age > x->atk + 4) return 0;   /* -63 dB: a tail too quiet to hear stops costing time */
     }
     int32_t a1 = x->amp;
     if (!a0 && !a1) return 1;
@@ -478,6 +484,7 @@ static AC int voice_block(struct voice *x, int32_t *bus, int32_t tape_pe)
     for (unsigned k = 0; k < x->n; ++k) {
         struct osc *o = &x->o[k];
         if (x->fm && k == 0) continue;                    /* the carrier renders after its modulator */
+        if (o->route == R_LATE && x->late < 8) continue;  /* a shimmer not yet faded in costs nothing */
         int32_t *b = o->route == R_LATE ? vb_late : o->route == R_MOD ? vb_mod : o->route == R_RING ? vb_ring : vb_dry;
         if (o->route == R_LATE && !has_late) { has_late = 1; for (unsigned i = 0; i < n; ++i) vb_late[i] = 0; }
         if (o->route == R_RING) { has_ring = 1; for (unsigned i = 0; i < n; ++i) vb_ring[i] = 0; }
@@ -546,7 +553,7 @@ static AC int voice_block(struct voice *x, int32_t *bus, int32_t tape_pe)
             x->lp2 = lp; x->bp2 = bp;
         }
     }
-    if (has_late) { int32_t g = x->late; for (unsigned i = 0; i < n; ++i) vb_dry[i] += (vb_late[i] * g) >> 15; }
+    if (has_late && x->late >= 8) { int32_t g = x->late; for (unsigned i = 0; i < n; ++i) vb_dry[i] += (vb_late[i] * g) >> 15; }
     /* amplitude, ramped across the block, into the ring */
     int32_t step = (a1 - a0) >> 7, a = a0;
     for (unsigned i = 0; i < n; ++i) { bus[i] += (vb_dry[i] * (a >> 1)) >> 14; a += step; }
@@ -679,8 +686,18 @@ static AC int32_t exp2_q15(int32_t q8)        /* 2^(q8/256) x 32768, q8 <= 0..+ 
     if (i >= 0) return i > 2 ? 0x7fffffff : m << i;
     return -i >= 15 ? 0 : m >> -i;
 }
+#ifdef FM1_HOST_TEST
+static uint32_t dbg_units, dbg_voices, dbg_rings, dbg_peak;
+__attribute__((export_name("sonar_dbg"))) uint32_t sonar_dbg(int reset)
+{
+    uint32_t v = dbg_peak; if (reset) dbg_peak = 0; return v;
+}
+#endif
 AC void sonar_render(int32_t *output, unsigned frames)
 {
+#ifdef FM1_HOST_TEST
+    dbg_units = dbg_voices = dbg_rings = 0;
+#endif
     if (!output || frames != BLK) return;
     /* panel keys */
     while (lq_r != lq_w) {
@@ -715,6 +732,26 @@ AC void sonar_render(int32_t *output, unsigned frames)
         ring_tape_pe[r] = ((lfo(R->wph) * R->wow) >> 13) + ((lfo(R->fph) * R->flut) >> 13) + ((lfo(R->dph) * R->wdrift) >> 13);
         for (unsigned i = 0; i < BLK; ++i) ring_bus[r][i] = 0;
     }
+    /* The work budget. The FM-1 must finish every block in time or the output
+     * buzzes, so when too many voices would sound, the quietest fade out within
+     * one block: fading tails first, then the softest notes. */
+    {
+        int32_t cost = 0;
+        for (unsigned i = 0; i < VOICES; ++i) if (v[i].on && v[i].rel_left != 1) cost += voice_cost(&v[i]);
+        int32_t budget = work_budget;
+        while (cost > budget) {
+            struct voice *q = 0; int32_t best = 0x7fffffff;
+            for (unsigned i = 0; i < VOICES; ++i) {
+                struct voice *x = &v[i];
+                if (!x->on || x->rel_left == 1 || x->burst) continue;
+                int32_t s = x->amp >> (x->stage == 2 ? 2 : 0);      /* a fading tail counts as quieter */
+                if (s < best) { best = s; q = x; }
+            }
+            if (!q) break;
+            cost -= voice_cost(q);
+            q->stage = 2; q->kr = 0; q->rel_left = 2; q->gate = 0;   /* ramps to silence across the next block, then stops */
+        }
+    }
     unsigned busy[SN_LANES];
     for (unsigned r = 0; r < SN_LANES; ++r) busy[r] = 0;
     for (unsigned i = 0; i < VOICES; ++i) {
@@ -723,6 +760,9 @@ AC void sonar_render(int32_t *output, unsigned frames)
         unsigned r = x->ring < SN_LANES ? x->ring : 0;
         if (!voice_block(x, ring_bus[r], ring_tape_pe[r])) x->on = 0;
         busy[r] = 1;
+#ifdef FM1_HOST_TEST
+        dbg_units += x->n + (x->fmode ? 2U * x->stages : 0U) + (x->nmode ? 2U : 0U) + 1U; ++dbg_voices;
+#endif
     }
     for (unsigned i = 0; i < BLK; ++i) { mixL[i] = 0; mixR[i] = 0; fxbuf[i] = 0; keysL[i] = 0; keysR[i] = 0; }
     for (unsigned r = 0; r < SN_LANES; ++r) {
@@ -731,6 +771,9 @@ AC void sonar_render(int32_t *output, unsigned frames)
         if (rd[r].quiet >= 400) continue;                         /* a silent ring rests after a while */
         if (r == SN_KEYS) ring_block(r, keysL, keysR, fxbuf);    /* the keys skip the loops' compressor: their volumes stay apart */
         else ring_block(r, mixL, mixR, fxbuf);
+#ifdef FM1_HOST_TEST
+        ++dbg_rings;
+#endif
     }
     if (loops_fade != loops_fade_tgt) {
         int32_t f = loops_fade + loops_fade_step;
@@ -757,6 +800,9 @@ AC void sonar_render(int32_t *output, unsigned frames)
         mixL[i] += ((eL * fx_echo) >> 15) + ((rL * fx_rev) >> 15);
         mixR[i] += ((eR * fx_echo) >> 15) + ((rR * fx_rev) >> 15);
     }
+#ifdef FM1_HOST_TEST
+    { uint32_t cost = dbg_units + dbg_rings * 4U; if (cost > (dbg_peak & 0xffff)) dbg_peak = cost | (dbg_voices << 16); }
+#endif
     /* the compressor: -10 dB with a wide knee, made up, like the app's */
     int32_t peak = 0;
     for (unsigned i = 0; i < BLK; ++i) {
@@ -1241,3 +1287,5 @@ void sonar_dsp_keys_env(float *attack, float *sustain, float *release)
     float am = fexp2(((float)sn_song.keys_atk - 50.f) / 25.f), rm = fexp2(((float)sn_song.keys_rel - 50.f) / 25.f);
     *attack = (t->rawA0 + t->rawA1) * .5f * am; *sustain = (float)t->sus / 32767.f; *release = t->rawR * rm;
 }
+
+void sonar_dsp_budget(int32_t units) { work_budget = units < 16 ? 16 : units; }

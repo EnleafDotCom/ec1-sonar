@@ -77,6 +77,7 @@ void sonar_dsp_live(unsigned ring, unsigned d, unsigned y, unsigned key, unsigne
 void sonar_dsp_audition(unsigned ring, unsigned d, unsigned y);
 void sonar_dsp_loops_fade(int32_t target_q15, unsigned blocks);   /* 0 blocks: at once */
 int32_t sonar_dsp_loops_level(void);
+void sonar_dsp_budget(int32_t units);   /* how much voice work a block may take */
 enum { SN_WAVES = 7 };                 /* PAD (its own), SINE, TRIANGLE, SAW, SQUARE, PULSE, CHOIR */
 void sonar_dsp_keys(void);             /* the keys' wave, detune, attack and release changed */
 void sonar_dsp_keys_shape(int8_t *out, unsigned n);   /* two cycles of the keys' wave, for the screen */

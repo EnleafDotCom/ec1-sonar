@@ -796,6 +796,27 @@ void sonar_poll(uint32_t now)
     if (fading_out && sonar_dsp_loops_level() == 0) { fading_out = 0; sonar_play(0); say("STOPPED"); }   /* stays silent until PLAY */
     if (fading_out && !sn_rt.playing) { fading_out = 0; sonar_dsp_loops_fade(32767, 0); }
     store_poll(now);
+    /* The work budget follows this FM-1: the platform counts audio blocks that
+     * came out late. One late block cuts the budget at once; after four clean
+     * seconds it creeps back up, so it settles just under what the chip can do. */
+    {
+        static uint32_t seen, checked, calm_since, started;
+        static int32_t budget = 80;
+        if (!started) { started = now ? now : 1; calm_since = now; }
+        if (now - checked >= 100U && now - started >= 2000U) {
+            checked = now;
+            struct fm1_audio_stats st; fm1_audio_stats_read(&st);
+            if (!seen) seen = st.overruns | 0x80000000U;
+            else if ((st.overruns | 0x80000000U) != seen) {
+                seen = st.overruns | 0x80000000U;
+                budget = budget > 32 ? budget - 10 : 24; calm_since = now;
+                sonar_dsp_budget(budget);
+            } else if (now - calm_since >= 4000U && budget < 110) {
+                budget += 4; calm_since = now;
+                sonar_dsp_budget(budget);
+            }
+        }
+    }
     (void)key_text;
 }
 
